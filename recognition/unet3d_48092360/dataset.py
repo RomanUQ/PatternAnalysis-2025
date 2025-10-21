@@ -58,5 +58,25 @@ class HipMRISlicesDataset(Dataset):
         if arr.ndim == 2:
             return arr
         return np.squeeze(arr)
+    
+    def __getitem__(self, i: int):
+        """
+        Get sample i: load image + mask, squeeze to 2D, binarize mask, apply transform
+        Args:
+            i (int): Zero-based sample index
+        Returns:
+            dict: {'image': np.ndarray(H,W) or torch.FloatTensor[1,H,W],
+                'mask':  same type/shape as 'image'}
+        """
+        ip, mp = self.pairs[i]
+        img = self._load_2d(ip)
+        msk = self._load_2d(mp)
 
+        # convert any label >0 to 1.0
+        if self.binarize:
+            msk = (msk != 0).astype(np.float32)
+        sample = {"image": img, "mask": msk}
 
+        if self.transform:
+            return self.transform(sample)
+        return sample
