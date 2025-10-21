@@ -80,3 +80,16 @@ class HipMRISlicesDataset(Dataset):
         if self.transform:
             return self.transform(sample)
         return sample
+
+class ZScore:
+    """Normalize image to zero mean/unit std, leave mask unchanged"""
+    def __call__(self, sample):
+        return {"image": _zscore(sample["image"]), "mask": sample["mask"]}
+
+class ToTensor:
+    """Convert numpy arrays to torch tensors and add channel dim"""
+    def __call__(self, sample):
+        # shape: (1,H,W)
+        img = torch.from_numpy(sample["image"]).unsqueeze(0).float()
+        msk = torch.from_numpy(sample["mask"]).unsqueeze(0).float()
+        return {"image": img, "mask": msk}
