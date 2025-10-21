@@ -34,7 +34,13 @@ class HipMRISlicesDataset(Dataset):
         self.transform = transform
         self.binarize = binarize_mask
 
+        imgs = sorted(os.listdir(self.img_dir))
+        mset = set(os.listdir(self.msk_dir))
         self.pairs = []
+        for f in imgs:
+            if f in mset:
+                self.pairs.append((os.path.join(self.img_dir, f), os.path.join(self.msk_dir, f)))
+
 
     def __len__(self):
         return len(self.pairs)
