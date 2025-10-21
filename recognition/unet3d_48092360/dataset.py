@@ -41,6 +41,22 @@ class HipMRISlicesDataset(Dataset):
             if f in mset:
                 self.pairs.append((os.path.join(self.img_dir, f), os.path.join(self.msk_dir, f)))
 
-
     def __len__(self):
         return len(self.pairs)
+    
+    def _load_2d(self, path: str) -> np.ndarray:
+        """
+        Load a 2D NIfTI slice as float32. Accepts (H, W) or 
+        (H, W, 1)/(1, H, W) and just squeezes any size-1 axes
+
+        Args:
+            path (str): Filepath to a NIfTI file
+        Returns:
+            numpy.ndarray: 2D array of shape (H, W) with dtype float32
+        """
+        arr = nib.as_closest_canonical(nib.load(path)).get_fdata(dtype=np.float32)
+        if arr.ndim == 2:
+            return arr
+        return np.squeeze(arr)
+
+
