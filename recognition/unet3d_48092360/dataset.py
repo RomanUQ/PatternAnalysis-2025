@@ -2,7 +2,7 @@ import os
 import numpy as np
 import nibabel as nib
 import torch
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
 def _zscore(x: np.ndarray, eps: float = 1e-8) -> np.ndarray:
@@ -93,3 +93,34 @@ class ToTensor:
         img = torch.from_numpy(sample["image"]).unsqueeze(0).float()
         msk = torch.from_numpy(sample["mask"]).unsqueeze(0).float()
         return {"image": img, "mask": msk}
+
+def build_dataset(data_root: str, split: str = "train"):
+    """
+    Build the HipMRISlicesDataset with standard transforms (ZScore; ToTensor)
+    Args:
+        data_root (str): Root path containing keras_slices_* and keras_slices_seg_* folders
+        split (str): Dataset split to load ("train", "validate", or "test")
+    Returns:
+        HipMRISlicesDataset: Dataset giving dicts with image/mask, transformed to tensors
+    """
+    tfm = transforms.Compose([ZScore(), ToTensor()])
+    return HipMRISlicesDataset(data_root, split=split, transform=tfm, binarize_mask=True)
+
+def make_loaders(data_root: str, split: str = "train", batch_size: int = 8, num_workers: int = 2):
+    """
+    Create DataLoaders for the chosen split (train) and the validation split
+    Args:
+        data_root (str): Root path to the dataset
+        split (str): Split for the training loader ("train" or "test")
+        batch_size (int): Batch size for both loaders
+        num_workers (int): Num of worker processes per DataLoader
+    Returns:
+        tuple[DataLoader, DataLoader]: (train_loader, val_loader)
+    """
+    train_ds = build_dataset(data_root, split=split)
+    val_ds = build_dataset(data_root, split="validate")
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, 
+                              num_workers=num_workers, pin_memory=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, 
+                            shuffle=False, num_workers=num_workers, pin_memory=True)
+    return train_loader, val_loader
