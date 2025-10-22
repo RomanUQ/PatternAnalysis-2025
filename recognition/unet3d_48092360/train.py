@@ -1,9 +1,17 @@
-from modules import UNet2D
-import torch
+# recognition/unet3d_48092360/train.py
+import time, torch
+from torch import nn
+from recognition.unet3d_48092360.dataset import make_loaders
+from recognition.unet3d_48092360.modules import UNet2D
 
-# just to test run Unet2D for now
-if __name__ == "__main__":
-    m = UNet2D(in_channels=1, out_channels=1)
-    x = torch.zeros(2,1,128,128)
-    y = m(x)
-    print("UNet2D forward OK:", tuple(y.shape))
+# Device config
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+if device.type == 'cpu':
+    print("Warning CUDA not Found. Using CPU")
+
+# Hyper-parameters (simple constants, no argparse)
+DATA_ROOT = "/home/groups/comp3710/HipMRI_Study_open/keras_slices_data"
+EPOCHS = 5
+BATCH_SIZE = 8
+LR = 1e-3
+NUM_WORKERS = 2
