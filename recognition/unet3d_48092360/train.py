@@ -33,7 +33,7 @@ def train_one_epoch():
         # Shape: [B,1,H,W]
         x = batch["image"].to(device, non_blocking=True)
         y = batch["mask"].to(device, non_blocking=True)
-        
+
         optimizer.zero_grad(set_to_none=True)
         logits = model(x)
         loss = criterion(logits, y)
@@ -42,3 +42,28 @@ def train_one_epoch():
         running += loss.item() * x.size(0)
         n += x.size(0)
     return running / n
+
+@torch.no_grad()
+def evaluate():
+    """
+    Evaluate on val_loader and return mean loss
+    Returns:
+        float: Average validation loss over all samples
+    """
+    model.eval()
+    running, n = 0.0, 0
+    for batch in val_loader:
+        x = batch["image"].to(device, non_blocking=True)
+        y = batch["mask"].to(device, non_blocking=True)
+        running += criterion(model(x), y).item() * x.size(0)
+        n += x.size(0)
+    return running / n
+
+# Run
+best = float('inf'); t0 = time.time()
+for ep in range(1, EPOCHS + 1):
+    tr_loss = train_one_epoch()
+    va_loss = evaluate()
+    best = min(best, va_loss)
+    print(f"Epoch {ep:02d}/{EPOCHS} | train loss {tr_loss:.4f} | val loss {va_loss:.4f} | best {best:.4f}")
+print(f"Total time: {time.time()-t0:.1f}s")
