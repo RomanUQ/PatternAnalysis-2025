@@ -115,7 +115,7 @@ class OutConv(nn.Module):
     Final 1x1 convolution mapping features to class logits
     Args:
         in_ch (int): Input channels from the last decoder stage
-        out_ch (int): Num of output channels
+        out_ch (int): Output channels
     """
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
