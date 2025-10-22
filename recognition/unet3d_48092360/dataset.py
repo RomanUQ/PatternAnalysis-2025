@@ -1,3 +1,4 @@
+# recognition/unet3d_48092360/dataset.py
 import os
 import numpy as np
 import nibabel as nib
@@ -34,12 +35,38 @@ class HipMRISlicesDataset(Dataset):
         self.transform = transform
         self.binarize = binarize_mask
 
-        imgs = sorted(os.listdir(self.img_dir))
-        mset = set(os.listdir(self.msk_dir))
+        def _id(name: str) -> str:
+            # remove extension
+            if name.endswith(".nii.gz"):
+                base = name[:-7]
+            elif name.endswith(".nii"):
+                base = name[:-4]
+            else:
+                base = os.path.splitext(name)[0]
+            # strip prefixes so case_ and seg_ match
+            for pref in ("case_", "seg_"):
+                if base.startswith(pref):
+                    return base[len(pref):]
+            return base
+
+        imgs = os.listdir(self.img_dir)
+        imgs.sort()
+
+        msks = os.listdir(self.msk_dir)
+        msks.sort()
+
+        m_by_id = {}
+        for f in msks:
+            k = _id(f)
+            m_by_id[k] = f
+
         self.pairs = []
         for f in imgs:
-            if f in mset:
-                self.pairs.append((os.path.join(self.img_dir, f), os.path.join(self.msk_dir, f)))
+            k = _id(f)
+            if k in m_by_id:
+                self.pairs.append((
+                    os.path.join(self.img_dir, f),
+                    os.path.join(self.msk_dir, m_by_id[k])))
 
     def __len__(self):
         return len(self.pairs)
