@@ -13,11 +13,12 @@ class DoubleConv(nn.Module):
         super().__init__()
         self.conv = nn.Sequential(
             nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
+            nn.InstanceNorm2d(out_channels, affine=True),
+            nn.LeakyReLU(0.01, inplace=True),
+            nn.Dropout2d(p=0.1),
             nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
+            nn.InstanceNorm2d(out_channels, affine=True),
+            nn.LeakyReLU(0.01, inplace=True),
         )
 
     def forward(self, x):
@@ -90,10 +91,16 @@ class Up(nn.Module):
 
     def forward(self, x, skip):
         # Upsample deep feature
-        x = self.up(x) # (N, in_ch//2, H*2, W*2)
+        # (N, in_ch//2, H*2, W*2)
+        x = self.up(x)
 
         # Center crop skip to match x if shapes differ (handles odd/even dims)
         if skip.size(2) != x.size(2) or skip.size(3) != x.size(3):
+            # if skip is smaller (odd dims), pad first to avoid empty crop
+            if skip.size(2) < x.size(2) or skip.size(3) < x.size(3):
+                ph = x.size(2) - skip.size(2)
+                pw = x.size(3) - skip.size(3)
+                skip = F.pad(skip, (pw//2, pw - pw//2, ph//2, ph - ph//2))
             dh = (skip.size(2) - x.size(2)) // 2
             dw = (skip.size(3) - x.size(3)) // 2
             skip = skip[:, :, dh:dh + x.size(2), dw:dw + x.size(3)]
