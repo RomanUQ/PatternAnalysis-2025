@@ -17,6 +17,7 @@ def dice_coef(logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> 
     denom = pred.sum(dim=(1,2,3)) + target.sum(dim=(1,2,3)) + eps
     return (2.0 * inter / denom).mean().item()
 
+@torch.no_grad()
 def main():
     """Load one val sample, run UNet2D, print Dice, save image/mask/pred figure."""
     model = UNet2D(in_channels=1, out_channels=1, base=64).to(DEVICE)
