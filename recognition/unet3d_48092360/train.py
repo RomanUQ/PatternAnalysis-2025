@@ -10,11 +10,11 @@ if device.type == 'cpu':
     print("Warning CUDA not Found. Using CPU")
 
 # Hyper-parameters (simple constants, no argparse)
-DATA_ROOT = "/home/groups/comp3710/HipMRI_Study_open/keras_slices_data"
+DATA_ROOT = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\.gitignore\2d_dataset"
 EPOCHS = 5
-BATCH_SIZE = 8
+BATCH_SIZE = 1
 LR = 1e-3
-NUM_WORKERS = 2
+NUM_WORKERS = 0
 
 # Data
 train_loader, val_loader = make_loaders(
@@ -25,23 +25,27 @@ model = UNet2D(in_channels=1, out_channels=1, base=64).to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 criterion = nn.BCEWithLogitsLoss()
 
+use_amp = torch.cuda.is_available()
+scaler  = torch.amp.GradScaler('cuda', enabled=use_amp)
+
 def train_one_epoch():
     """Run one training epoch over train_loader (forward, loss, backward, step)"""
     model.train()
     running, n = 0.0, 0
     for batch in train_loader:
-        # Shape: [B,1,H,W]
         x = batch["image"].to(device, non_blocking=True)
         y = batch["mask"].to(device, non_blocking=True)
-
         optimizer.zero_grad(set_to_none=True)
-        logits = model(x)
-        loss = criterion(logits, y)
-        loss.backward()
-        optimizer.step()
+        with torch.amp.autocast('cuda', enabled=use_amp):
+            logits = model(x)
+            loss = criterion(logits, y)
+        scaler.scale(loss).to(torch.float32)
+        scaler.scale(loss).backward()
+        scaler.step(optimizer)
+        scaler.update()
         running += loss.item() * x.size(0)
         n += x.size(0)
-    return running / n
+    return running / max(n,1)
 
 @torch.no_grad()
 def evaluate():

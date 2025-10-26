@@ -145,9 +145,10 @@ def make_loaders(data_root: str, split: str = "train", batch_size: int = 8, num_
         tuple[DataLoader, DataLoader]: (train_loader, val_loader)
     """
     train_ds = build_dataset(data_root, split=split)
-    val_ds = build_dataset(data_root, split="validate")
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, 
-                              num_workers=num_workers, pin_memory=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, 
-                            shuffle=False, num_workers=num_workers, pin_memory=True)
+    val_ds   = build_dataset(data_root, split="validate")
+    pin = torch.cuda.is_available()
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=pin)
+    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=pin)
     return train_loader, val_loader
