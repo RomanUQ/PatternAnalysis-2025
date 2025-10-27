@@ -1,0 +1,6 @@
+checkpoints/
+plots/
+__pycache__/
+*.nii.gz
+recognition/**/data/
+recognition/**/__init__.py
