@@ -5,7 +5,7 @@ import nibabel as nib
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
-import torch.nn.functional as F  # <-- added for pad_collate
+import torch.nn.functional as F
 
 def _zscore(x: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     """

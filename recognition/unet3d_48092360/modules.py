@@ -126,7 +126,8 @@ class OutConv(nn.Module):
 
     def forward(self, x):
         return self.conv(x)
-
+    
+# ---------------------------- UNet3D ----------------------------
 
 class UNet3D(nn.Module):
     """
@@ -141,8 +142,7 @@ class UNet3D(nn.Module):
 
     def forward(self, x):
         return self.head(x)
-    
-# ---------------------------- UNet3D ----------------------------
+
 
 class ContextBlock3d(nn.Module):
     """
@@ -180,7 +180,7 @@ class LocalizationBlock3d(nn.Module):
     Used after concatenating skip and upsampled features to reduce/aggregate channels
 
     REF: (Isensee, 2018)
-    https://arxiv.org/abs/1802.10508
+    https://arxiv.org/abs/1802.10508v1
     """
     def __init__(self, in_ch: int, out_ch: int):
         super().__init__()
@@ -194,3 +194,69 @@ class LocalizationBlock3d(nn.Module):
         x = self.act1(self.in1(x))
         x = self.conv2(x)
         return x
+    
+class Down3d(nn.Module):
+    """
+    Improved downsampling (Isensee et al.): 3x3x3 stride-2 conv -> ContextBlock3d.
+    Replaces max-pooling with learnable downsampling
+
+    REF: (Isensee, 2018)
+    https://arxiv.org/abs/1802.10508v1
+    """
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.down = nn.Conv3d(in_ch, out_ch, kernel_size=3, stride=2, padding=1, bias=False)
+        self.block = ContextBlock3d(out_ch, out_ch, pdrop=0.3)
+
+    def forward(self, x):
+        return self.block(self.down(x))
+
+
+class Up3d(nn.Module):
+    """
+    Improved upsampling: nearest neighbor upsample x2, 3x3x3 conv (+IN+LeakyReLU),
+    concat with aligned skip then LocalizationBlock3d. Avoids checkerboard artifacts
+
+    REF: (Isensee, 2018) nearest upsample+conv vs transpose conv
+    https://arxiv.org/abs/1802.10508v1
+    REF: (compact/fast 3D design context, CAN3D): 
+    https://arxiv.org/abs/2109.05443
+    """
+    def __init__(self, in_ch: int, out_ch: int, skip_ch: int):
+        super().__init__()
+        self.up = nn.Upsample(scale_factor=2, mode="nearest")
+        self.reduce = nn.Conv3d(in_ch, in_ch // 2, kernel_size=3, padding=1, bias=False)
+        self.in1 = nn.InstanceNorm3d(in_ch // 2, affine=True)
+        self.act = nn.LeakyReLU(0.01, inplace=True)
+        self.loc = LocalizationBlock3d(in_ch // 2 + skip_ch, out_ch)
+
+    def _align(self, skip, x):
+        # pad then center crop so D/H/W match
+        pd = max(0, x.size(2) - skip.size(2))
+        ph = max(0, x.size(3) - skip.size(3))
+        pw = max(0, x.size(4) - skip.size(4))
+        if pd or ph or pw:
+            skip = F.pad(skip, (pw//2, pw - pw//2,  ph//2, ph - ph//2, pd//2, pd - pd//2)) # W, H, D
+        dd = (skip.size(2) - x.size(2)) // 2
+        dh = (skip.size(3) - x.size(3)) // 2
+        dw = (skip.size(4) - x.size(4)) // 2
+        return skip[:, :, dd:dd + x.size(2), dh:dh + x.size(3), dw:dw + x.size(4)]
+
+    def forward(self, x, skip):
+        x = self.up(x)
+        x = self.act(self.in1(self.reduce(x)))
+        skip = self._align(skip, x)
+        x = torch.cat([skip, x], dim=1)
+        return self.loc(x)
+
+
+class OutConv3d(nn.Module):
+    """
+    Final 1x1x1 convolution mapping features to class logits (3D)
+    """
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.conv = nn.Conv3d(in_ch, out_ch, kernel_size=1)
+
+    def forward(self, x):
+        return self.conv(x)
