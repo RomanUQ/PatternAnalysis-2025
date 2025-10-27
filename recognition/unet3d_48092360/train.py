@@ -40,7 +40,11 @@ else:
         DATA_ROOT, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
 
 # Model / Optim / Loss
-model = UNet2D(in_channels=1, out_channels=1, base=64).to(device)
+if MODE == "2d":
+    model = UNet2D(in_channels=1, out_channels=1, base=64).to(device)
+else:
+    model = UNet3D(in_channels=1, out_channels=1, base=16, deep_supervision=True).to(device)
+
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 criterion = nn.BCEWithLogitsLoss()
 
@@ -49,8 +53,13 @@ scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
 def dice_coef(logits, target, eps: float = 1e-6):
     pred = (torch.sigmoid(logits) > 0.5).float()
-    inter = (pred * target).sum(dim=(1,2,3))
-    denom = pred.sum(dim=(1,2,3)) + target.sum(dim=(1,2,3)) + eps
+    # auto select dims: 2D is (1,2,3), 3D is (1,2,3,4)
+    if pred.dim() == 4:
+        dims = (1,2,3)
+    else:
+        dims = (1,2,3,4)
+    inter = (pred * target).sum(dim=dims)
+    denom = pred.sum(dim=dims) + target.sum(dim=dims) + eps
     return (2.0 * inter / denom).mean().item()
 
 def train_one_epoch():
