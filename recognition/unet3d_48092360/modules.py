@@ -127,21 +127,65 @@ class OutConv(nn.Module):
     def forward(self, x):
         return self.conv(x)
     
-# ---------------------------- UNet3D ----------------------------
+# ---------------------------- Improved UNet3D ----------------------------
 
 class UNet3D(nn.Module):
     """
-    Placeholder for 3D UNet
-    Args:
-        in_channels (int): Input channels
-        out_channels (int): Output channels
+    Improved 3D UNet, network structure from (Isensee, 2018):
+    - ContextBlock3d (pre-activation residual + dropout)
+    - 3x3x3 stride 2 downsampling
+    - nearest neighbor upsample + 3x3x3 conv
+    - LocalizationBlock3d after skip concat
+    - Deep supervision: sum of mult -scale segmentation heads
+
+    REF: nnU-Net (InstanceNorm for small batches)
+    https://arxiv.org/abs/1809.10486
+    REF: CAN3D (compact fast 3D designs)
+    https://arxiv.org/abs/2109.05443
     """
-    def __init__(self, in_channels: int = 1, out_channels: int = 1):
+    def __init__(self, in_channels: int = 1, out_channels: int = 1, base: int = 16, deep_supervision: bool = True):
         super().__init__()
-        self.head = nn.Conv3d(in_channels, out_channels, kernel_size=1)
+        self.deep_supervision = deep_supervision
+
+        # Encoder (context)
+        self.inc = ContextBlock3d(in_channels, base, pdrop=0.3)
+        self.down1 = Down3d(base, base*2)
+        self.down2 = Down3d(base*2, base*4)
+        self.down3 = Down3d(base*4, base*8)
+        self.down4 = Down3d(base*8, base*16)
+        self.bot = ContextBlock3d(base*16, base*16, pdrop=0.3)
+
+        # Decoder (localization)
+        self.up1 = Up3d(base*16, base*8, skip_ch=base*8)
+        self.up2 = Up3d(base*8, base*4, skip_ch=base*4)
+        self.up3 = Up3d(base*4, base*2, skip_ch=base*2)
+        self.up4 = Up3d(base*2, base, skip_ch=base)
+        self.outc = OutConv3d(base, out_channels)
+
+        # Deep supervision heads (summed to final)
+        self.seg2 = nn.Conv3d(base*4, out_channels, kernel_size=1)
+        self.seg3 = nn.Conv3d(base*2, out_channels, kernel_size=1)
 
     def forward(self, x):
-        return self.head(x)
+        x1 = self.inc(x)
+        x2 = self.down1(x1)
+        x3 = self.down2(x2)
+        x4 = self.down3(x3)
+        x5 = self.down4(x4)
+        x6 = self.bot(x5)
+
+        # channels
+        y1 = self.up1(x6, x4) # base*8
+        y2 = self.up2(y1, x3) # base*4
+        y3 = self.up3(y2, x2) # base*2
+        y4 = self.up4(y3, x1) # base
+
+        # REF: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.interpolate.html
+        logits = self.outc(y4)
+        if self.deep_supervision:
+            logits = logits + F.interpolate(self.seg3(y3), size=logits.shape[2:], mode="nearest") 
+            + F.interpolate(self.seg2(y2), size=logits.shape[2:], mode="nearest")
+        return logits
 
 
 class ContextBlock3d(nn.Module):
