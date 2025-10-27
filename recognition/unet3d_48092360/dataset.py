@@ -233,9 +233,23 @@ class HipMRI3DVolumes(Dataset):
     def __len__(self):
         return len(self.pairs)
 
-    # implemented in later
     def _load_3d(self, path: str) -> np.ndarray:
-        pass
+        """
+        Load a 3D NIfTI volume as float32. Accepts (H,W,D) or (H,W,D,1) and squeezes size 1 axes
+        """
+        vol = nib.as_closest_canonical(nib.load(path)).get_fdata(dtype=np.float32)
+        if vol.ndim == 4 and 1 in vol.shape:
+            vol = np.squeeze(vol)
+        return vol # (H,W,D)
 
     def __getitem__(self, i: int):
-        pass
+        ip, mp = self.pairs[i]
+        vol = self._load_3d(ip)
+        msk = self._load_3d(mp)
+        if self.binarize:
+            msk = (msk != 0).astype(np.float32)
+        sample = {"image": vol, "mask": msk}
+        if self.transform:
+            return self.transform(sample)
+        return sample
+
