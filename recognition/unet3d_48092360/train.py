@@ -1,8 +1,8 @@
 # recognition/unet3d_48092360/train.py
 import time, torch, os
 from torch import nn
-from recognition.unet3d_48092360.dataset import make_loaders
-from recognition.unet3d_48092360.modules import UNet2D
+from recognition.unet3d_48092360.dataset import make_loaders, make_loaders_3d
+from recognition.unet3d_48092360.modules import UNet2D, UNet3D
 import matplotlib.pyplot as plt
 
 # Device config
@@ -10,8 +10,13 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 if device.type == 'cpu':
     print("Warning CUDA not Found. Using CPU")
 
+# MODE toggle
+MODE = "3d"  # strictly "2d" or "3d"
+
 # Hyper-parameters (simple constants, no argparse)
-DATA_ROOT = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\.gitignore\2d_dataset"
+# DATA ROOT is set by mode below
+DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\.gitignore\2d_dataset"
+DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\.gitignore\3d_dataset"
 EPOCHS = 10
 BATCH_SIZE = 4
 LR = 1e-3
@@ -19,7 +24,7 @@ NUM_WORKERS = 2
 
 # Data
 train_loader, val_loader = make_loaders(
-    DATA_ROOT, split="train", batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
+    DATA_ROOT_2D, split="train", batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
 
 # Model / Optim / Loss
 model = UNet2D(in_channels=1, out_channels=1, base=64).to(device)
