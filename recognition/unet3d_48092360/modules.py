@@ -3,6 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+# ---------------------------- UNet2D ----------------------------
+
 class DoubleConv(nn.Module):
     """
     Two stacked 3x3 convolutions with BN + ReLU
@@ -139,3 +141,56 @@ class UNet3D(nn.Module):
 
     def forward(self, x):
         return self.head(x)
+    
+# ---------------------------- UNet3D ----------------------------
+
+class ContextBlock3d(nn.Module):
+    """
+    Pre activation residual context module with dropout
+    IN, LeakyReLU, 3x3x3, Dropout3d, IN, LeakyReLU, 3x3x3, with residual
+    If channels change uses 1x1x1 for the skip path
+
+    REF: (Isensee, 2018)
+    https://arxiv.org/abs/1802.10508
+    """
+    def __init__(self, in_ch: int, out_ch: int, pdrop: float = 0.3):
+        super().__init__()
+        self.in1 = nn.InstanceNorm3d(in_ch, affine=True)
+        self.act1 = nn.LeakyReLU(0.01, inplace=True)
+        self.conv1 = nn.Conv3d(in_ch, out_ch, kernel_size=3, padding=1, bias=False)
+        self.drop = nn.Dropout3d(p=pdrop)
+        self.in2 = nn.InstanceNorm3d(out_ch, affine=True)
+        self.act2 = nn.LeakyReLU(0.01, inplace=True)
+        self.conv2 = nn.Conv3d(out_ch, out_ch, kernel_size=3, padding=1, bias=False)
+        self.skip = nn.Identity() if in_ch == out_ch else nn.Conv3d(in_ch, out_ch, kernel_size=1, bias=True)
+
+    def forward(self, x):
+        res = x
+        y = self.act1(self.in1(x))
+        y = self.conv1(y)
+        y = self.drop(y)
+        y = self.act2(self.in2(y))
+        y = self.conv2(y)
+        return y + self.skip(res)
+
+
+class LocalizationBlock3d(nn.Module):
+    """
+    Localization block: 3x3x3 conv (+IN+LeakyReLU), 1x1x1 conv
+    Used after concatenating skip and upsampled features to reduce/aggregate channels
+
+    REF: (Isensee, 2018)
+    https://arxiv.org/abs/1802.10508
+    """
+    def __init__(self, in_ch: int, out_ch: int):
+        super().__init__()
+        self.conv1 = nn.Conv3d(in_ch, out_ch, kernel_size=3, padding=1, bias=False)
+        self.in1 = nn.InstanceNorm3d(out_ch, affine=True)
+        self.act1 = nn.LeakyReLU(0.01, inplace=True)
+        self.conv2 = nn.Conv3d(out_ch, out_ch, kernel_size=1, bias=True)
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.act1(self.in1(x))
+        x = self.conv2(x)
+        return x
