@@ -17,14 +17,27 @@ MODE = "3d"  # strictly "2d" or "3d"
 # DATA ROOT is set by mode below
 DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\.gitignore\2d_dataset"
 DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\.gitignore\3d_dataset"
-EPOCHS = 10
-BATCH_SIZE = 4
-LR = 1e-3
-NUM_WORKERS = 2
+
+if MODE == "2d":
+    DATA_ROOT = DATA_ROOT_2D
+    EPOCHS = 10
+    BATCH_SIZE = 4
+    LR = 1e-3
+    NUM_WORKERS = 0
+else:
+    DATA_ROOT = DATA_ROOT_3D
+    EPOCHS = 20
+    BATCH_SIZE = 1
+    LR = 1e-3
+    NUM_WORKERS = 0
 
 # Data
-train_loader, val_loader = make_loaders(
-    DATA_ROOT_2D, split="train", batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
+if MODE == "2d":
+    train_loader, val_loader = make_loaders(
+        DATA_ROOT, split="train", batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
+else:
+    train_loader, val_loader = make_loaders_3d(
+        DATA_ROOT, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
 
 # Model / Optim / Loss
 model = UNet2D(in_channels=1, out_channels=1, base=64).to(device)
