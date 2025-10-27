@@ -5,6 +5,7 @@ import nibabel as nib
 import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
+import torch.nn.functional as F  # <-- added for pad_collate
 
 def _zscore(x: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     """
@@ -18,6 +19,8 @@ def _zscore(x: np.ndarray, eps: float = 1e-8) -> np.ndarray:
     x = x.astype(np.float32, copy=False)
     m, s = float(x.mean()), float(x.std())
     return (x - m) / (s if s > eps else eps)
+
+# ----------------------------- 2D DATASET -----------------------------
 
 class HipMRISlicesDataset(Dataset):
     """
@@ -55,12 +58,12 @@ class HipMRISlicesDataset(Dataset):
         msks = os.listdir(self.msk_dir)
         msks.sort()
 
+        self.pairs = []
         m_by_id = {}
         for f in msks:
             k = _id(f)
             m_by_id[k] = f
 
-        self.pairs = []
         for f in imgs:
             k = _id(f)
             if k in m_by_id:
@@ -133,6 +136,28 @@ def build_dataset(data_root: str, split: str = "train"):
     tfm = transforms.Compose([ZScore(), ToTensor()])
     return HipMRISlicesDataset(data_root, split=split, transform=tfm, binarize_mask=True)
 
+def pad_collate(batch):
+    """
+    Pad to max H,W in the batch, then stack.
+    Expects each item: {'image': Tensor[1,H,W], 'mask': Tensor[1,H,W]}.
+    Pads with zeros (OK for image + mask).
+    """
+    imgs = [b["image"] for b in batch]
+    msks = [b["mask"] for b in batch]
+    H = max(t.shape[1] for t in imgs)
+    W = max(t.shape[2] for t in imgs)
+
+    pad_imgs, pad_msks = [], []
+    for x, y in zip(imgs, msks):
+        ph = H - x.shape[1]
+        pw = W - x.shape[2]
+        x = F.pad(x, (0, pw, 0, ph), mode="constant", value=0.0)
+        y = F.pad(y, (0, pw, 0, ph), mode="constant", value=0.0)
+        pad_imgs.append(x)
+        pad_msks.append(y)
+
+    return {"image": torch.stack(pad_imgs, 0), "mask": torch.stack(pad_msks, 0)}
+
 def make_loaders(data_root: str, split: str = "train", batch_size: int = 8, num_workers: int = 2):
     """
     Create DataLoaders for the chosen split (train) and the validation split
@@ -145,10 +170,36 @@ def make_loaders(data_root: str, split: str = "train", batch_size: int = 8, num_
         tuple[DataLoader, DataLoader]: (train_loader, val_loader)
     """
     train_ds = build_dataset(data_root, split=split)
-    val_ds   = build_dataset(data_root, split="validate")
+    val_ds = build_dataset(data_root, split="validate")
     pin = torch.cuda.is_available()
-    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-                              num_workers=num_workers, pin_memory=pin)
-    val_loader   = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
-                              num_workers=num_workers, pin_memory=pin)
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True, 
+                              num_workers=num_workers, pin_memory=pin, collate_fn=pad_collate)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, 
+                            shuffle=False, num_workers=num_workers, pin_memory=pin, collate_fn=pad_collate)
     return train_loader, val_loader
+
+# ----------------------------- 3D DATASET -----------------------------
+
+class HipMRI3DVolumes(Dataset):
+    """
+    3D NIfTI volumes for UNet3D
+    Returns dict: {'image': np.ndarray(H,W,D), 'mask': np.ndarray(H,W,D)}
+    """
+    def __init__(self, root: str, transform=None, binarize_mask: bool = True):
+        self.img_dir = os.path.join(root, "semantic_MRs")
+        self.msk_dir = os.path.join(root, "semantic_labels_only")
+        self.transform = transform
+        self.binarize = binarize_mask
+
+        # filled in next commit
+        self.pairs = []
+
+    def __len__(self):
+        return len(self.pairs)
+
+    # implemented in later
+    def _load_3d(self, path: str) -> np.ndarray:
+        pass
+
+    def __getitem__(self, i: int):
+        pass
