@@ -228,14 +228,18 @@ class HipMRI3DVolumes(Dataset):
                     os.path.join(self.msk_dir, m_by_id[k])
                 ))
 
-
-
     def __len__(self):
         return len(self.pairs)
 
     def _load_3d(self, path: str) -> np.ndarray:
         """
-        Load a 3D NIfTI volume as float32. Accepts (H,W,D) or (H,W,D,1) and squeezes size 1 axes
+        Load a 3D NIfTI volume as float32. Accepts (H,W,D) or 
+        (H, W, D, 1) and just squeezes any size 1 axes
+
+        Args:
+            path (str): Filepath to a NIfTI file
+        Returns:
+            numpy.ndarray: 3D array of shape (H, W, D)
         """
         vol = nib.as_closest_canonical(nib.load(path)).get_fdata(dtype=np.float32)
         if vol.ndim == 4 and 1 in vol.shape:
@@ -243,6 +247,14 @@ class HipMRI3DVolumes(Dataset):
         return vol # (H,W,D)
 
     def __getitem__(self, i: int):
+        """
+        Get sample i: load volume + mask, squeeze to 3D, binarize mask, apply transform
+        Args:
+            i (int): Zero based sample index
+        Returns:
+            dict: {'image': np.ndarray(H,W,D) or torch.FloatTensor[1,D,H,W],
+                'mask':  same type/shape as 'image'}
+        """
         ip, mp = self.pairs[i]
         vol = self._load_3d(ip)
         msk = self._load_3d(mp)
@@ -253,3 +265,77 @@ class HipMRI3DVolumes(Dataset):
             return self.transform(sample)
         return sample
 
+class ZScore3D:
+    """Normalize volume to zero mean/unit std; leave mask unchanged"""
+    def __call__(self, sample):
+        return {"image": _zscore(sample["image"]), "mask": sample["mask"]}
+
+class ToTensor3D:
+    """Convert numpy (H,W,D) to torch tensors [1,D,H,W] for 3D convs"""
+    def __call__(self, sample):
+        img = torch.from_numpy(sample["image"]).float().permute(2, 0, 1).unsqueeze(0)
+        msk = torch.from_numpy(sample["mask"]).float().permute(2, 0, 1).unsqueeze(0)
+        return {"image": img, "mask": msk}
+
+def pad_collate3d(batch):
+    """
+    Zero pad each [1,D,H,W] to the batch max size then stack
+    Args:
+        batch (list[dict]): items with 'image' and 'mask' tensors shaped [1,D,H,W]
+    Returns:
+        dict: {'image': torch.FloatTensor[B,1,D,H,W], 'mask': torch.FloatTensor[B,1,D,H,W]}
+    """
+    imgs = [b["image"] for b in batch]
+    msks = [b["mask"] for b in batch]
+    D = max(t.shape[1] for t in imgs)
+    H = max(t.shape[2] for t in imgs)
+    W = max(t.shape[3] for t in imgs)
+
+    pimgs, pmsks = [], []
+    for x, y in zip(imgs, msks):
+        pd = D - x.shape[1]
+        ph = H - x.shape[2]
+        pw = W - x.shape[3]
+        x = F.pad(x, (0, pw, 0, ph, 0, pd), mode="constant", value=0.0)
+        y = F.pad(y, (0, pw, 0, ph, 0, pd), mode="constant", value=0.0)
+        pimgs.append(x); pmsks.append(y)
+
+    return {"image": torch.stack(pimgs, 0), "mask": torch.stack(pmsks, 0)}
+
+def build_dataset_3d(data_root: str):
+    """
+    Build the HipMRI3DVolumes dataset with standard transforms
+    Args:
+        data_root (str): Root path containing semantic_MRs and semantic_labels_only
+    Returns:
+        HipMRI3DVolumes: Dataset giving dicts with volume/mask, transformed to tensors
+    """
+    tfm = transforms.Compose([ZScore3D(), ToTensor3D()])
+    return HipMRI3DVolumes(data_root, transform=tfm, binarize_mask=True)
+
+def make_loaders_3d(data_root: str, batch_size: int = 1, num_workers: int = 0, split_ratio: float = 0.9):
+    """
+    Create DataLoaders for the 3D dataset with a deterministic 90/10 split
+    Args:
+        data_root (str): Root path to the 3D dataset
+        batch_size (int): Batch size for both loaders
+        num_workers (int): Num of worker processes per DataLoader
+        split_ratio (float): Fraction for the training split (remainder is validation)
+    Returns:
+        tuple[DataLoader, DataLoader]: (train_loader, val_loader)
+
+    REF: researched torch.Generator() and Dataloader()
+    REF: https://docs.pytorch.org/docs/stable/data.html
+    """
+    full = build_dataset_3d(data_root)
+    n = len(full)
+    n_tr = max(1, int(n * split_ratio))
+    gen = torch.Generator().manual_seed(67)
+    train_ds, val_ds = torch.utils.data.random_split(full, [n_tr, n - n_tr], generator=gen)
+
+    pin = torch.cuda.is_available()
+    train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=pin, collate_fn=pad_collate3d)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=pin, collate_fn=pad_collate3d)
+    return train_loader, val_loader
