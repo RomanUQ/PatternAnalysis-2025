@@ -1,8 +1,9 @@
 # recognition/unet3d_48092360/train.py
-import time, torch
+import time, torch, os
 from torch import nn
 from recognition.unet3d_48092360.dataset import make_loaders
 from recognition.unet3d_48092360.modules import UNet2D
+import matplotlib.pyplot as plt
 
 # Device config
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -11,10 +12,10 @@ if device.type == 'cpu':
 
 # Hyper-parameters (simple constants, no argparse)
 DATA_ROOT = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\.gitignore\2d_dataset"
-EPOCHS = 5
-BATCH_SIZE = 1
+EPOCHS = 10
+BATCH_SIZE = 4
 LR = 1e-3
-NUM_WORKERS = 0
+NUM_WORKERS = 2
 
 # Data
 train_loader, val_loader = make_loaders(
@@ -26,25 +27,32 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 criterion = nn.BCEWithLogitsLoss()
 
 use_amp = torch.cuda.is_available()
-scaler  = torch.amp.GradScaler('cuda', enabled=use_amp)
+scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
+
+def dice_coef(logits, target, eps: float = 1e-6):
+    pred = (torch.sigmoid(logits) > 0.5).float()
+    inter = (pred * target).sum(dim=(1,2,3))
+    denom = pred.sum(dim=(1,2,3)) + target.sum(dim=(1,2,3)) + eps
+    return (2.0 * inter / denom).mean().item()
 
 def train_one_epoch():
     """Run one training epoch over train_loader (forward, loss, backward, step)"""
     model.train()
     running, n = 0.0, 0
-    for batch in train_loader:
+    for i, batch in enumerate(train_loader):
         x = batch["image"].to(device, non_blocking=True)
         y = batch["mask"].to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
             loss = criterion(logits, y)
-        scaler.scale(loss).to(torch.float32)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
         running += loss.item() * x.size(0)
         n += x.size(0)
+        if (i + 1) % 500 == 0:
+            print(f"  step {i+1}/{len(train_loader)}  loss={loss.item():.4f}", flush=True)
     return running / max(n,1)
 
 @torch.no_grad()
@@ -55,19 +63,40 @@ def evaluate():
         float: Average validation loss over all samples
     """
     model.eval()
-    running, n = 0.0, 0
+    loss_sum, dice_sum, n = 0.0, 0.0, 0
     for batch in val_loader:
         x = batch["image"].to(device, non_blocking=True)
         y = batch["mask"].to(device, non_blocking=True)
-        running += criterion(model(x), y).item() * x.size(0)
+        with torch.amp.autocast('cuda', enabled=use_amp):
+            logits = model(x)
+            loss = criterion(logits, y)
+        loss_sum += loss.item() * x.size(0)
+        dice_sum += dice_coef(logits, y) * x.size(0)
         n += x.size(0)
-    return running / n
+    return loss_sum / n, dice_sum / n
 
-# Run
-best = float('inf'); t0 = time.time()
-for ep in range(1, EPOCHS + 1):
-    tr_loss = train_one_epoch()
-    va_loss = evaluate()
-    best = min(best, va_loss)
-    print(f"Epoch {ep:02d}/{EPOCHS} | train loss {tr_loss:.4f} | val loss {va_loss:.4f} | best {best:.4f}")
-print(f"Total time: {time.time()-t0:.1f}s")
+if __name__ == "__main__":
+
+    # Run + track metrics
+    os.makedirs("checkpoints", exist_ok=True)
+    os.makedirs("plots", exist_ok=True)
+    train_losses, val_losses, val_dice = [], [], []
+    best = float('inf'); t0 = time.time()
+
+    for ep in range(1, EPOCHS + 1):
+        tr_loss = train_one_epoch()
+        va_loss, va_d = evaluate()
+        train_losses.append(tr_loss); val_losses.append(va_loss); val_dice.append(va_d)
+
+        # save best checkpoint (by val loss)
+        if va_loss <= best:
+            best = va_loss
+            torch.save(model.state_dict(), os.path.join("checkpoints", "best.pt"))
+
+        print(f"Epoch {ep:02d}/{EPOCHS} | train loss {tr_loss:.4f} | val loss {va_loss:.4f} | dice {va_d:.4f} | best {best:.4f}")
+
+    # plots
+    plt.figure(); plt.plot(train_losses, label="train"); plt.plot(val_losses, label="val"); plt.legend(); plt.title("Loss"); plt.savefig("plots/loss_curve.png", dpi=150); plt.close()
+    plt.figure(); plt.plot(val_dice, label="val dice"); plt.legend(); plt.title("Dice"); plt.savefig("plots/dice_curve.png", dpi=150); plt.close()
+    print(f"Saved plots to {os.path.abspath('plots')}")
+    print(f"Total time: {time.time()-t0:.1f}s")

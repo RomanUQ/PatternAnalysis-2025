@@ -191,8 +191,44 @@ class HipMRI3DVolumes(Dataset):
         self.transform = transform
         self.binarize = binarize_mask
 
-        # filled in next commit
+        def _id(name: str) -> str:
+            # strip extension
+            if name.endswith(".nii.gz"):
+                base = name[:-7]
+            elif name.endswith(".nii"):
+                base = name[:-4]
+            else:
+                base = os.path.splitext(name)[0]
+
+            # Keep only <...>_Week<...>
+            parts = base.split("_")
+            if len(parts) >= 2 and parts[1].lower().startswith("week"):
+                # Normalize capitalization of Week
+                week = "Week" + parts[1][4:]
+                return parts[0] + "_" + week
+
+            # return the whole stem if it didnt match
+            return base
+
+        # pairing images with masks
+        imgs = os.listdir(self.img_dir); imgs.sort()
+        msks = os.listdir(self.msk_dir); msks.sort()
+
+        m_by_id = {}
+        for f in msks:
+            k = _id(f)
+            m_by_id[k] = f
+
         self.pairs = []
+        for f in imgs:
+            k = _id(f)
+            if k in m_by_id:
+                self.pairs.append((
+                    os.path.join(self.img_dir, f),
+                    os.path.join(self.msk_dir, m_by_id[k])
+                ))
+
+
 
     def __len__(self):
         return len(self.pairs)
