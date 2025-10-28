@@ -1,4 +1,4 @@
-# recognition/unet3d_48092360/modules.py
+# recognition/improved_unet3d_48092360/modules.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -143,7 +143,7 @@ class UNet3D(nn.Module):
     REF: CAN3D (compact fast 3D designs)
     https://arxiv.org/abs/2109.05443
     """
-    def __init__(self, in_channels: int = 1, out_channels: int = 1, base: int = 16, deep_supervision: bool = True):
+    def __init__(self, in_channels: int = 1, out_channels: int = 6, base: int = 16, deep_supervision: bool = True):
         super().__init__()
         self.deep_supervision = deep_supervision
 
@@ -183,8 +183,11 @@ class UNet3D(nn.Module):
         # REF: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.interpolate.html
         logits = self.outc(y4)
         if self.deep_supervision:
-            logits = logits + F.interpolate(self.seg3(y3), size=logits.shape[2:], mode="nearest") 
-            + F.interpolate(self.seg2(y2), size=logits.shape[2:], mode="nearest")
+            logits = (
+                logits
+                + F.interpolate(self.seg3(y3), size=logits.shape[2:], mode="nearest")
+                + F.interpolate(self.seg2(y2), size=logits.shape[2:], mode="nearest")
+            )
         return logits
 
 
