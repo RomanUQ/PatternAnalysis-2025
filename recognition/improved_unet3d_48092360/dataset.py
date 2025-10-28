@@ -1,4 +1,4 @@
-# recognition/unet3d_48092360/dataset.py
+# recognition/improved_unet3d_48092360/dataset.py
 import os
 import numpy as np
 import nibabel as nib
@@ -248,7 +248,7 @@ class HipMRI3DVolumes(Dataset):
 
     def __getitem__(self, i: int):
         """
-        Get sample i: load volume + mask, squeeze to 3D, binarize mask, apply transform
+        Get sample i: load volume + mask, squeeze to 3D, apply transform
         Args:
             i (int): Zero based sample index
         Returns:
@@ -257,9 +257,11 @@ class HipMRI3DVolumes(Dataset):
         """
         ip, mp = self.pairs[i]
         vol = self._load_3d(ip)
-        msk = self._load_3d(mp)
-        if self.binarize:
-            msk = (msk != 0).astype(np.float32)
+        # keep raw integer class IDs (multiclass)
+        msk = nib.as_closest_canonical(nib.load(mp)).get_fdata()
+        if msk.ndim == 4 and 1 in msk.shape:
+            msk = np.squeeze(msk)
+        msk = np.asarray(msk, dtype=np.int64)
         sample = {"image": vol, "mask": msk}
         if self.transform:
             return self.transform(sample)
@@ -274,7 +276,7 @@ class ToTensor3D:
     """Convert numpy (H,W,D) to torch tensors [1,D,H,W] for 3D convs"""
     def __call__(self, sample):
         img = torch.from_numpy(sample["image"]).float().permute(2, 0, 1).unsqueeze(0)
-        msk = torch.from_numpy(sample["mask"]).float().permute(2, 0, 1).unsqueeze(0)
+        msk = torch.from_numpy(sample["mask"]).long().permute(2, 0, 1).unsqueeze(0)
         return {"image": img, "mask": msk}
 
 def pad_collate3d(batch):
@@ -283,7 +285,7 @@ def pad_collate3d(batch):
     Args:
         batch (list[dict]): items with 'image' and 'mask' tensors shaped [1,D,H,W]
     Returns:
-        dict: {'image': torch.FloatTensor[B,1,D,H,W], 'mask': torch.FloatTensor[B,1,D,H,W]}
+        dict: {'image': torch.FloatTensor[B,1,D,H,W], 'mask': torch.LongTensor[B,1,D,H,W]}
     """
     imgs = [b["image"] for b in batch]
     msks = [b["mask"] for b in batch]
@@ -297,7 +299,7 @@ def pad_collate3d(batch):
         ph = H - x.shape[2]
         pw = W - x.shape[3]
         x = F.pad(x, (0, pw, 0, ph, 0, pd), mode="constant", value=0.0)
-        y = F.pad(y, (0, pw, 0, ph, 0, pd), mode="constant", value=0.0)
+        y = F.pad(y, (0, pw, 0, ph, 0, pd), mode="constant", value=0)
         pimgs.append(x); pmsks.append(y)
 
     return {"image": torch.stack(pimgs, 0), "mask": torch.stack(pmsks, 0)}
