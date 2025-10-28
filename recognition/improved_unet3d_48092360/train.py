@@ -17,6 +17,9 @@ MODE = "3d"  # strictly "2d" or "3d"
 
 NUM_CLASSES = 6
 
+# bg small, c4/c5 higher
+CLASS_WEIGHTS = torch.tensor([0.05, 1.0, 1.0, 1.0, 2.0, 2.0])
+
 # Hyper-parameters (simple constants, no argparse)
 # DATA ROOT is set by mode below
 DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\2d_dataset"
@@ -30,7 +33,7 @@ if MODE == "2d":
     NUM_WORKERS = 0
 else:
     DATA_ROOT = DATA_ROOT_3D
-    EPOCHS = 20
+    EPOCHS = 30
     BATCH_SIZE = 1
     LR = 5e-4
     NUM_WORKERS = 0
@@ -50,7 +53,8 @@ if MODE == "2d":
     criterion = nn.BCEWithLogitsLoss()
 else:
     model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(device)
-    criterion = nn.CrossEntropyLoss()
+    w = CLASS_WEIGHTS.to(device).float()
+    criterion = nn.CrossEntropyLoss(weight=w)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
@@ -68,6 +72,15 @@ def dice_coef(logits, target, eps: float = 1e-6):
     denom = pred.sum(dim=dims) + target.sum(dim=dims) + eps
     return (2.0 * inter / denom).mean().item()
 
+def soft_dice_loss(logits, target, eps=1e-6):
+    C = logits.size(1)
+    t = torch.nn.functional.one_hot(target.squeeze(1), C).permute(0,4,1,2,3).float()
+    p = torch.softmax(logits, dim=1)
+    inter = (p * t).sum(dim=(0,2,3,4))
+    den = (p + t).sum(dim=(0,2,3,4)) + eps
+    dice_per_c = 2*inter/den
+    return 1.0 - dice_per_c.mean()
+
 def train_one_epoch():
     """Run one training epoch over train_loader (forward, loss, backward, step)"""
     model.train()
@@ -79,7 +92,8 @@ def train_one_epoch():
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
             if MODE == "3d":
-                loss = criterion(logits, y.squeeze(1).long())
+                ce = criterion(logits, y.squeeze(1).long())
+                loss = ce + 0.5 * soft_dice_loss(logits, y)
             else:
                 loss = criterion(logits, y)
         scaler.scale(loss).backward()
@@ -113,7 +127,8 @@ def evaluate():
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
             if MODE == "3d":
-                loss = criterion(logits, y.squeeze(1).long())
+                ce = criterion(logits, y.squeeze(1).long())
+                loss = ce + 0.5 * soft_dice_loss(logits, y)
             else:
                 loss = criterion(logits, y)
         loss_sum += loss.item() * x.size(0)
