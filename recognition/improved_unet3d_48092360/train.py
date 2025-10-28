@@ -1,4 +1,4 @@
-# recognition/unet3d_48092360/train.py
+# recognition/improved_unet3d_48092360/train.py 
 import time, torch, os
 from torch import nn
 from recognition.improved_unet3d_48092360.dataset import make_loaders, make_loaders_3d
@@ -14,6 +14,8 @@ if device.type == 'cpu':
 
 # MODE toggle
 MODE = "3d"  # strictly "2d" or "3d"
+
+NUM_CLASSES = 6
 
 # Hyper-parameters (simple constants, no argparse)
 # DATA ROOT is set by mode below
@@ -38,17 +40,19 @@ if MODE == "2d":
     train_loader, val_loader = make_loaders(
         DATA_ROOT, split="train", batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
 else:
-    train_loader, val_loader = make_loaders_3d(
+    # use train/val/test
+    train_loader, val_loader, test_loader = make_loaders_3d(
         DATA_ROOT, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
 
 # Model / Optim / Loss
 if MODE == "2d":
     model = UNet2D(in_channels=1, out_channels=1, base=64).to(device)
+    criterion = nn.BCEWithLogitsLoss()
 else:
-    model = UNet3D(in_channels=1, out_channels=1, base=16, deep_supervision=True).to(device)
+    model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(device)
+    criterion = nn.CrossEntropyLoss()
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
-criterion = nn.BCEWithLogitsLoss()
 
 use_amp = torch.cuda.is_available()
 scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
@@ -74,7 +78,10 @@ def train_one_epoch():
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
-            loss = criterion(logits, y)
+            if MODE == "3d":
+                loss = criterion(logits, y.squeeze(1).long())
+            else:
+                loss = criterion(logits, y)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -93,16 +100,64 @@ def evaluate():
     """
     model.eval()
     loss_sum, dice_sum, n = 0.0, 0.0, 0
+
+    # accumulators for multiclass Dice (3D)
+    if MODE == "3d":
+        inter_sums = torch.zeros(NUM_CLASSES, device=device)
+        den_sums = torch.zeros(NUM_CLASSES, device=device)
+        gt_sums = torch.zeros(NUM_CLASSES, device=device)
+
     for batch in val_loader:
         x = batch["image"].to(device, non_blocking=True)
         y = batch["mask"].to(device, non_blocking=True)
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
-            loss = criterion(logits, y)
+            if MODE == "3d":
+                loss = criterion(logits, y.squeeze(1).long())
+            else:
+                loss = criterion(logits, y)
         loss_sum += loss.item() * x.size(0)
-        dice_sum += dice_coef(logits, y) * x.size(0)
         n += x.size(0)
-    return loss_sum / n, dice_sum / n
+
+        if MODE == "3d":
+            # compute classwise dice components
+            t = y.squeeze(1).long()
+            p = logits.softmax(1).argmax(1)
+            for c in range(NUM_CLASSES):
+                pz = (p == c).float()
+                tz = (t == c).float()
+                inter_sums[c] += (pz * tz).sum()
+                den_sums[c] += pz.sum() + tz.sum()
+                gt_sums[c] += tz.sum()
+        else:
+            dice_sum += dice_coef(logits, y) * x.size(0)
+
+    if MODE == "3d":
+        dice_per_class = (2.0 * inter_sums / (den_sums + 1e-6)).tolist()
+        # ignore classes never present in GT to avoid degenerate denominators
+        gt_list = gt_sums.tolist()
+        valid = []
+        for i, cnt in enumerate(gt_list):
+            if cnt > 0:
+                valid.append(i)
+        if valid:
+            min_val = None
+            for i in valid:
+                val_i = dice_per_class[i]
+                if (min_val is None) or (val_i < min_val):
+                    min_val = val_i
+            min_dice = min_val
+        else:
+            min_dice = 0.0
+        # compact printout
+        parts = []
+        for i in valid:
+            parts.append(f"c{i}:{dice_per_class[i]:.3f}")
+        short = " ".join(parts)
+        print(f"    [val dice per class] {short}")
+        return loss_sum / max(n,1), float(min_dice)
+    else:
+        return loss_sum / n, dice_sum / n
 
 if __name__ == "__main__":
 
@@ -129,3 +184,51 @@ if __name__ == "__main__":
     plt.figure(); plt.plot(val_dice, label="val dice"); plt.legend(); plt.title("Dice"); plt.savefig("plots/dice_curve.png", dpi=150); plt.close()
     print(f"Saved plots to {os.path.abspath('plots')}")
     print(f"Total time: {time.time()-t0:.1f}s")
+
+    # Final test evaluation
+    if MODE == "3d":
+        model.eval()
+        loss_sum, n = 0.0, 0
+        inter_sums = torch.zeros(NUM_CLASSES, device=device)
+        den_sums = torch.zeros(NUM_CLASSES, device=device)
+        gt_sums = torch.zeros(NUM_CLASSES, device=device)
+        with torch.no_grad():
+            for batch in test_loader:
+                x = batch["image"].to(device, non_blocking=True)
+                y = batch["mask"].to(device, non_blocking=True)
+                with torch.amp.autocast('cuda', enabled=use_amp):
+                    logits = model(x)
+                    loss = criterion(logits, y.squeeze(1).long())
+                loss_sum += loss.item() * x.size(0)
+                n += x.size(0)
+                t = y.squeeze(1).long()
+                p = logits.softmax(1).argmax(1)
+                for c in range(NUM_CLASSES):
+                    pz = (p == c).float()
+                    tz = (t == c).float()
+                    inter_sums[c] += (pz * tz).sum()
+                    den_sums[c] += pz.sum() + tz.sum()
+                    gt_sums[c] += tz.sum()
+
+        test_loss = loss_sum / max(n,1)
+        dice_per_class = (2.0 * inter_sums / (den_sums + 1e-6)).tolist()
+        gt_list_test = gt_sums.tolist()
+        valid = []
+        for i, cnt in enumerate(gt_list_test):
+            if cnt > 0:
+                valid.append(i)
+        if valid:
+            min_val = None
+            for i in valid:
+                val_i = dice_per_class[i]
+                if (min_val is None) or (val_i < min_val):
+                    min_val = val_i
+            min_dice = min_val
+        else:
+            min_dice = 0.0
+        parts = []
+        for i in valid:
+            parts.append(f"c{i}:{dice_per_class[i]:.3f}")
+        short = " ".join(parts)
+        print(f"[TEST] loss {test_loss:.4f} | min dice {min_dice:.4f}")
+        print(f"[TEST] dice per class: {short}")
