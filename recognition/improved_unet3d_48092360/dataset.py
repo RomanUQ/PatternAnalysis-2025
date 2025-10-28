@@ -1,9 +1,10 @@
 # recognition/improved_unet3d_48092360/dataset.py
 import os
+import random
 import numpy as np
 import nibabel as nib
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, Subset
 from torchvision import transforms
 import torch.nn.functional as F
 
@@ -272,6 +273,20 @@ class ZScore3D:
     def __call__(self, sample):
         return {"image": _zscore(sample["image"]), "mask": sample["mask"]}
 
+class RandomFlip3D:
+    """Random flips along each axis with prob p per axis"""
+    def __init__(self, p: float = 0.5):
+        self.p = p
+    def __call__(self, sample):
+        img, msk = sample["image"], sample["mask"]
+        if random.random() < self.p:
+            img = np.flip(img, 0); msk = np.flip(msk, 0)
+        if random.random() < self.p:
+            img = np.flip(img, 1); msk = np.flip(msk, 1)
+        if random.random() < self.p:
+            img = np.flip(img, 2); msk = np.flip(msk, 2)
+        return {"image": np.ascontiguousarray(img), "mask": np.ascontiguousarray(msk)}
+
 class ToTensor3D:
     """Convert numpy (H,W,D) to torch tensors [1,D,H,W] for 3D convs"""
     def __call__(self, sample):
@@ -304,7 +319,7 @@ def pad_collate3d(batch):
 
     return {"image": torch.stack(pimgs, 0), "mask": torch.stack(pmsks, 0)}
 
-def build_dataset_3d(data_root: str):
+def build_dataset_3d(data_root: str, augment: bool = False):
     """
     Build the HipMRI3DVolumes dataset with standard transforms
     Args:
@@ -312,8 +327,11 @@ def build_dataset_3d(data_root: str):
     Returns:
         HipMRI3DVolumes: Dataset giving dicts with volume/mask, transformed to tensors
     """
-    tfm = transforms.Compose([ZScore3D(), ToTensor3D()])
-    return HipMRI3DVolumes(data_root, transform=tfm, binarize_mask=True)
+    tfms = [ZScore3D()]
+    if augment:
+        tfms.insert(0, RandomFlip3D(p=0.5))
+    tfms.append(ToTensor3D())
+    return HipMRI3DVolumes(data_root, transform=transforms.Compose(tfms), binarize_mask=True)
 
 def make_loaders_3d(data_root: str, batch_size: int = 1, num_workers: int = 0, split_ratio: float = 0.9):
     """
@@ -329,15 +347,31 @@ def make_loaders_3d(data_root: str, batch_size: int = 1, num_workers: int = 0, s
     REF: researched torch.Generator() and Dataloader()
     REF: https://docs.pytorch.org/docs/stable/data.html
     """
-    full = build_dataset_3d(data_root)
-    n = len(full)
-    n_tr = max(1, int(n * split_ratio))
-    gen = torch.Generator().manual_seed(67)
-    train_ds, val_ds = torch.utils.data.random_split(full, [n_tr, n - n_tr], generator=gen)
+    # deterministic train/val/test via index permutation
+    base = HipMRI3DVolumes(data_root, transform=None, binarize_mask=True)
+    n = len(base)
+    assert n >= 3, f"Not enough 3D volumes under {data_root}"
+    n_tr = max(1, int(n * 0.8))
+    n_va = max(1, int(n * 0.1))
+    n_te = max(1, n - n_tr - n_va)
+
+    g = torch.Generator().manual_seed(67)
+    perm = torch.randperm(n, generator=g).tolist()
+    tr_idx = perm[:n_tr]; va_idx = perm[n_tr:n_tr+n_va]; te_idx = perm[n_tr+n_va:]
+
+    ds_train = build_dataset_3d(data_root, augment=True)
+    ds_eval = build_dataset_3d(data_root, augment=False)
+
+    train_ds = Subset(ds_train, tr_idx)
+    val_ds = Subset(ds_eval, va_idx)
+    test_ds = Subset(ds_eval, te_idx)
 
     pin = torch.cuda.is_available()
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
                               num_workers=num_workers, pin_memory=pin, collate_fn=pad_collate3d)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False,
                               num_workers=num_workers, pin_memory=pin, collate_fn=pad_collate3d)
-    return train_loader, val_loader
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=pin, collate_fn=pad_collate3d)
+    return train_loader, val_loader, test_loader
+
