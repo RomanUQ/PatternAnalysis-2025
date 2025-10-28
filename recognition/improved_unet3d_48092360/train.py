@@ -1,8 +1,8 @@
 # recognition/unet3d_48092360/train.py
 import time, torch, os
 from torch import nn
-from recognition.unet3d_48092360.dataset import make_loaders, make_loaders_3d
-from recognition.unet3d_48092360.modules import UNet2D, UNet3D
+from recognition.improved_unet3d_48092360.dataset import make_loaders, make_loaders_3d
+from recognition.improved_unet3d_48092360.modules import UNet2D, UNet3D
 import matplotlib.pyplot as plt
 
 # Device config
@@ -15,8 +15,8 @@ MODE = "3d"  # strictly "2d" or "3d"
 
 # Hyper-parameters (simple constants, no argparse)
 # DATA ROOT is set by mode below
-DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\data\2d_dataset"
-DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\data\3d_dataset"
+DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\2d_dataset"
+DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
 
 if MODE == "2d":
     DATA_ROOT = DATA_ROOT_2D

@@ -1,8 +1,8 @@
 # recognition/improved_unet3d_48092360/predict.py
 import os, torch
 import matplotlib.pyplot as plt
-from recognition.unet3d_48092360.modules import UNet2D, UNet3D
-from recognition.unet3d_48092360.dataset import build_dataset, build_dataset_3d
+from recognition.improved_unet3d_48092360.modules import UNet2D, UNet3D
+from recognition.improved_unet3d_48092360.dataset import build_dataset, build_dataset_3d
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -10,8 +10,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 MODE = "3d"  # strictly "2d" or "3d"
 
 # Data roots
-DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\data\2d_dataset"
-DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\unet3d_48092360\data\3d_dataset"
+DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\2d_dataset"
+DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
 
 CKPT = "checkpoints/best.pt" # loads if file exists
 THRESH = 0.5
