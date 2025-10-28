@@ -36,7 +36,7 @@ else:
     EPOCHS = 30
     BATCH_SIZE = 1
     LR = 5e-4
-    NUM_WORKERS = 0
+    NUM_WORKERS = 2
 
 # Data
 if MODE == "2d":

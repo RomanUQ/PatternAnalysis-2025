@@ -9,6 +9,8 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 # MODE toggle
 MODE = "3d"  # strictly "2d" or "3d"
 
+NUM_CLASSES = 6
+
 # Data roots
 DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\2d_dataset"
 DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
@@ -66,8 +68,8 @@ def main():
         print("Saved:", os.path.abspath("plots/predict_example_2d.png"))
 
     else:
-        # #D path
-        model = UNet3D(in_channels=1, out_channels=1, base=16, deep_supervision=True).to(DEVICE)
+        # 3D path (multiclass)
+        model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(DEVICE)
         if os.path.isfile(CKPT):
             model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
             print(f"Loaded weights: {CKPT}")
@@ -81,20 +83,45 @@ def main():
         x = sample["image"].unsqueeze(0).to(DEVICE) # [1,1,D,H,W]
         y = sample["mask"].unsqueeze(0).to(DEVICE) # [1,1,D,H,W]
 
-        logits = model(x)
-        d = dice_coef(logits, y)
-        print(f"[3D] Dice(volume 0): {d:.4f}")
+        logits = model(x) # [1,C,D,H,W]
+        probs = logits.softmax(1) # [1,C,D,H,W]
+        pred = probs.argmax(1) # [1,D,H,W] (class IDs)
+
+        # Per class Dice on this volume
+        inter_sums = torch.zeros(NUM_CLASSES, device=DEVICE)
+        den_sums = torch.zeros(NUM_CLASSES, device=DEVICE)
+        t = y.squeeze(1).long() # [1,D,H,W]
+        p = pred # [1,D,H,W]
+
+        c_idx = 0
+        while c_idx < NUM_CLASSES:
+            pz = (p == c_idx).float()
+            tz = (t == c_idx).float()
+            inter_sums[c_idx] += (pz * tz).sum()
+            den_sums[c_idx] += pz.sum() + tz.sum()
+            c_idx += 1
+
+        dice_per_class = (2.0 * inter_sums / (den_sums + 1e-6)).tolist()
+
+        # Print only classes that appear in real labels for this volume
+        msg_parts = []
+        i = 0
+        while i < NUM_CLASSES:
+            if den_sums[i].item() > 0:
+                msg_parts.append(f"c{i}:{dice_per_class[i]:.3f}")
+            i += 1
+        print("[3D] Dice per class (volume 0): " + " ".join(msg_parts))
 
         # Visualise a central axial slice
-        prob = torch.sigmoid(logits)[0,0].cpu() # [D,H,W]
-        img = x[0,0].cpu()
-        msk = y[0,0].cpu()
+        img = x[0,0].cpu() # [D,H,W]
+        msk = y[0,0].cpu() # [D,H,W] (int labels)
+        pred_vol = pred[0].cpu() # [D,H,W] (int labels)
         D = img.shape[0]
         mid = D // 2
 
-        img_s  = img[mid].numpy()
-        msk_s  = msk[mid].numpy()
-        pred_s = (prob[mid].numpy() > THRESH).astype("float32")
+        img_s = img[mid].numpy()
+        msk_s = msk[mid].numpy()
+        pred_s = pred_vol[mid].numpy()
 
         plt.figure(figsize=(9,3))
         for i, (title, arr) in enumerate([("image[z=mid]", img_s), ("mask[z=mid]", msk_s), ("pred[z=mid]", pred_s)]):

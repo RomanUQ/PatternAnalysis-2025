@@ -335,14 +335,14 @@ def build_dataset_3d(data_root: str, augment: bool = False):
 
 def make_loaders_3d(data_root: str, batch_size: int = 1, num_workers: int = 0, split_ratio: float = 0.9):
     """
-    Create DataLoaders for the 3D dataset with a deterministic 90/10 split
+    Create DataLoaders for the 3D dataset with a deterministic 80/10/10 split (train/val/test)
     Args:
         data_root (str): Root path to the 3D dataset
-        batch_size (int): Batch size for both loaders
+        batch_size (int): Batch size for all loaders
         num_workers (int): Num of worker processes per DataLoader
-        split_ratio (float): Fraction for the training split (remainder is validation)
+        split_ratio (float): Unused; kept for compatibility with earlier versions
     Returns:
-        tuple[DataLoader, DataLoader]: (train_loader, val_loader)
+        tuple[DataLoader, DataLoader, DataLoader]: (train_loader, val_loader, test_loader)
 
     REF: researched torch.Generator() and Dataloader()
     REF: https://docs.pytorch.org/docs/stable/data.html

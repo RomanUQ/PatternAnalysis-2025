@@ -137,6 +137,7 @@ class UNet3D(nn.Module):
     - nearest neighbor upsample + 3x3x3 conv
     - LocalizationBlock3d after skip concat
     - Deep supervision: sum of mult -scale segmentation heads
+    - out_chanels = 6 for HipMRI: background + 5 organs
 
     REF: nnU-Net (InstanceNorm for small batches)
     https://arxiv.org/abs/1809.10486
@@ -174,7 +175,7 @@ class UNet3D(nn.Module):
         x5 = self.down4(x4)
         x6 = self.bot(x5)
 
-        # channels
+        # decoder
         y1 = self.up1(x6, x4) # base*8
         y2 = self.up2(y1, x3) # base*4
         y3 = self.up3(y2, x2) # base*2
