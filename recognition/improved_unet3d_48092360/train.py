@@ -4,9 +4,11 @@ from torch import nn
 from recognition.improved_unet3d_48092360.dataset import make_loaders, make_loaders_3d
 from recognition.improved_unet3d_48092360.modules import UNet2D, UNet3D
 import matplotlib.pyplot as plt
+import torch.backends.cudnn as cudnn
 
 # Device config
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+cudnn.benchmark = True
 if device.type == 'cpu':
     print("Warning CUDA not Found. Using CPU")
 
@@ -28,7 +30,7 @@ else:
     DATA_ROOT = DATA_ROOT_3D
     EPOCHS = 20
     BATCH_SIZE = 1
-    LR = 1e-3
+    LR = 5e-4
     NUM_WORKERS = 0
 
 # Data
