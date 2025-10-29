@@ -31,7 +31,7 @@ CLASS_WEIGHTS = torch.tensor([0.05, 1.0, 1.0, 1.0, 2.0, 2.0])
 DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
 
 DATA_ROOT = DATA_ROOT_3D
-EPOCHS = 2
+EPOCHS = 30
 BATCH_SIZE = 1
 LR = 5e-4
 NUM_WORKERS = 2

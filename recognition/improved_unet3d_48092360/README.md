@@ -21,7 +21,7 @@ ___
 
 ## Repository Contents
 recognition/improved_unet3d_48092360/
-   - outputs/ ------ Where plots, segmentation image and model snapshot (snapshot file not included in repo) are saved
+   - outputs/ ------ Where plots, segmentation image and model snapshot (snapshot file not included in repo) are saved. Other images are for README.md file
    - dataset.py ---- 3D HipMRI dataset + transforms + deterministic 80/10/10 split
    - modules.py ---- improved UNet3D (Context/Down/Up/Localization/Out and deep supervision)
    - predict.py ---- load checkpoint, perclass Dice, central slice visualisation
