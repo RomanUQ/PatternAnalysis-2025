@@ -1,18 +1,14 @@
 # recognition/improved_unet3d_48092360/predict.py
 import os, torch
 import matplotlib.pyplot as plt
-from recognition.improved_unet3d_48092360.modules import UNet2D, UNet3D
-from recognition.improved_unet3d_48092360.dataset import build_dataset, build_dataset_3d
+from recognition.improved_unet3d_48092360.modules import UNet3D
+from recognition.improved_unet3d_48092360.dataset import build_dataset_3d
 
 DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-
-# MODE toggle
-MODE = "3d"  # strictly "2d" or "3d"
 
 NUM_CLASSES = 6
 
 # Data roots
-DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\2d_dataset"
 DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
 
 CKPT = "checkpoints/best.pt" # loads if file exists
@@ -20,114 +16,69 @@ THRESH = 0.5
 
 
 @torch.no_grad()
-def dice_coef(logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> float:
-    """
-    Batch Dice for 2D or 3D tensors
-    2D expects [B,1,H,W]; 3D expects [B,1,D,H,W]
-    """
-    pred = (torch.sigmoid(logits) > THRESH).float()
-    dims = (1,2,3) if pred.dim() == 4 else (1,2,3,4)
-    inter = (pred * target).sum(dim=dims)
-    denom = pred.sum(dim=dims) + target.sum(dim=dims) + eps
-    return (2.0 * inter / denom).mean().item()
-
-
-@torch.no_grad()
 def main():
     os.makedirs("plots", exist_ok=True)
 
-    if MODE == "2d":
-        # 2D path
-        model = UNet2D(in_channels=1, out_channels=1, base=64).to(DEVICE)
-        if os.path.isfile(CKPT):
-            model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
-            print(f"Loaded weights: {CKPT}")
-        else:
-            print("No checkpoint found, running with random 2D model")
-
-        model.eval()
-
-        ds = build_dataset(DATA_ROOT_2D, split="validate")
-        sample = ds[0]
-        x = sample["image"].unsqueeze(0).to(DEVICE) # [1,1,H,W]
-        y = sample["mask"].unsqueeze(0).to(DEVICE) # [1,1,H,W]
-
-        logits = model(x)
-        prob = torch.sigmoid(logits)[0,0].cpu().numpy()
-        pred = (prob > THRESH).astype("float32")
-        img = x[0,0].cpu().numpy()
-        msk = y[0,0].cpu().numpy()
-
-        d = dice_coef(logits, y)
-        print(f"[2D] Dice(sample 0): {d:.4f}")
-
-        plt.figure(figsize=(9,3))
-        for i, (title, arr) in enumerate([("image", img), ("mask", msk), ("pred", pred)]):
-            plt.subplot(1,3,i+1); plt.imshow(arr, cmap="gray"); plt.title(title); plt.axis("off")
-        plt.tight_layout(); plt.savefig("plots/predict_example_2d.png", dpi=150); plt.close()
-        print("Saved:", os.path.abspath("plots/predict_example_2d.png"))
-
+    # 3D path (multiclass)
+    model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(DEVICE)
+    if os.path.isfile(CKPT):
+        model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
+        print(f"Loaded weights: {CKPT}")
     else:
-        # 3D path (multiclass)
-        model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(DEVICE)
-        if os.path.isfile(CKPT):
-            model.load_state_dict(torch.load(CKPT, map_location=DEVICE))
-            print(f"Loaded weights: {CKPT}")
-        else:
-            print("No checkpoint found running with random 3D model")
+        print("No checkpoint found running with random 3D model")
 
-        model.eval()
+    model.eval()
 
-        ds = build_dataset_3d(DATA_ROOT_3D)
-        sample = ds[0]
-        x = sample["image"].unsqueeze(0).to(DEVICE) # [1,1,D,H,W]
-        y = sample["mask"].unsqueeze(0).to(DEVICE) # [1,1,D,H,W]
+    ds = build_dataset_3d(DATA_ROOT_3D)
+    sample = ds[0]
+    x = sample["image"].unsqueeze(0).to(DEVICE) # [1,1,D,H,W]
+    y = sample["mask"].unsqueeze(0).to(DEVICE) # [1,1,D,H,W]
 
-        logits = model(x) # [1,C,D,H,W]
-        probs = logits.softmax(1) # [1,C,D,H,W]
-        pred = probs.argmax(1) # [1,D,H,W] (class IDs)
+    logits = model(x) # [1,C,D,H,W]
+    probs = logits.softmax(1) # [1,C,D,H,W]
+    pred = probs.argmax(1) # [1,D,H,W] (class IDs)
 
-        # Per class Dice on this volume
-        inter_sums = torch.zeros(NUM_CLASSES, device=DEVICE)
-        den_sums = torch.zeros(NUM_CLASSES, device=DEVICE)
-        t = y.squeeze(1).long() # [1,D,H,W]
-        p = pred # [1,D,H,W]
+    # Per class Dice on this volume
+    inter_sums = torch.zeros(NUM_CLASSES, device=DEVICE)
+    den_sums = torch.zeros(NUM_CLASSES, device=DEVICE)
+    t = y.squeeze(1).long() # [1,D,H,W]
+    p = pred # [1,D,H,W]
 
-        c_idx = 0
-        while c_idx < NUM_CLASSES:
-            pz = (p == c_idx).float()
-            tz = (t == c_idx).float()
-            inter_sums[c_idx] += (pz * tz).sum()
-            den_sums[c_idx] += pz.sum() + tz.sum()
-            c_idx += 1
+    c_idx = 0
+    while c_idx < NUM_CLASSES:
+        pz = (p == c_idx).float()
+        tz = (t == c_idx).float()
+        inter_sums[c_idx] += (pz * tz).sum()
+        den_sums[c_idx] += pz.sum() + tz.sum()
+        c_idx += 1
 
-        dice_per_class = (2.0 * inter_sums / (den_sums + 1e-6)).tolist()
+    dice_per_class = (2.0 * inter_sums / (den_sums + 1e-6)).tolist()
 
-        # Print only classes that appear in real labels for this volume
-        msg_parts = []
-        i = 0
-        while i < NUM_CLASSES:
-            if den_sums[i].item() > 0:
-                msg_parts.append(f"c{i}:{dice_per_class[i]:.3f}")
-            i += 1
-        print("[3D] Dice per class (volume 0): " + " ".join(msg_parts))
+    # Print only classes that appear in real labels for this volume
+    msg_parts = []
+    i = 0
+    while i < NUM_CLASSES:
+        if den_sums[i].item() > 0:
+            msg_parts.append(f"c{i}:{dice_per_class[i]:.3f}")
+        i += 1
+    print("[3D] Dice per class (volume 0): " + " ".join(msg_parts))
 
-        # Visualise a central axial slice
-        img = x[0,0].cpu() # [D,H,W]
-        msk = y[0,0].cpu() # [D,H,W] (int labels)
-        pred_vol = pred[0].cpu() # [D,H,W] (int labels)
-        D = img.shape[0]
-        mid = D // 2
+    # Visualise a central axial slice
+    img = x[0,0].cpu() # [D,H,W]
+    msk = y[0,0].cpu() # [D,H,W] (int labels)
+    pred_vol = pred[0].cpu() # [D,H,W] (int labels)
+    D = img.shape[0]
+    mid = D // 2
 
-        img_s = img[mid].numpy()
-        msk_s = msk[mid].numpy()
-        pred_s = pred_vol[mid].numpy()
+    img_s = img[mid].numpy()
+    msk_s = msk[mid].numpy()
+    pred_s = pred_vol[mid].numpy()
 
-        plt.figure(figsize=(9,3))
-        for i, (title, arr) in enumerate([("image[z=mid]", img_s), ("mask[z=mid]", msk_s), ("pred[z=mid]", pred_s)]):
-            plt.subplot(1,3,i+1); plt.imshow(arr, cmap="gray"); plt.title(title); plt.axis("off")
-        plt.tight_layout(); plt.savefig("plots/predict_example_3d.png", dpi=150); plt.close()
-        print("Saved:", os.path.abspath("plots/predict_example_3d.png"))
+    plt.figure(figsize=(9,3))
+    for i, (title, arr) in enumerate([("image[z=mid]", img_s), ("mask[z=mid]", msk_s), ("pred[z=mid]", pred_s)]):
+        plt.subplot(1,3,i+1); plt.imshow(arr, cmap="gray"); plt.title(title); plt.axis("off")
+    plt.tight_layout(); plt.savefig("plots/predict_example_3d.png", dpi=150); plt.close()
+    print("Saved:", os.path.abspath("plots/predict_example_3d.png"))
 
 
 if __name__ == "__main__":

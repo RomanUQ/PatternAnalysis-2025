@@ -1,8 +1,8 @@
 # recognition/improved_unet3d_48092360/train.py 
 import time, torch, os
 from torch import nn
-from recognition.improved_unet3d_48092360.dataset import make_loaders, make_loaders_3d
-from recognition.improved_unet3d_48092360.modules import UNet2D, UNet3D
+from recognition.improved_unet3d_48092360.dataset import make_loaders_3d
+from recognition.improved_unet3d_48092360.modules import UNet3D
 import matplotlib.pyplot as plt
 import torch.backends.cudnn as cudnn
 
@@ -22,39 +22,23 @@ CLASS_WEIGHTS = torch.tensor([0.05, 1.0, 1.0, 1.0, 2.0, 2.0])
 
 # Hyper-parameters (simple constants, no argparse)
 # DATA ROOT is set by mode below
-DATA_ROOT_2D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\2d_dataset"
 DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
 
-if MODE == "2d":
-    DATA_ROOT = DATA_ROOT_2D
-    EPOCHS = 10
-    BATCH_SIZE = 4
-    LR = 1e-3
-    NUM_WORKERS = 0
-else:
-    DATA_ROOT = DATA_ROOT_3D
-    EPOCHS = 30
-    BATCH_SIZE = 1
-    LR = 5e-4
-    NUM_WORKERS = 2
+DATA_ROOT = DATA_ROOT_3D
+EPOCHS = 30
+BATCH_SIZE = 1
+LR = 5e-4
+NUM_WORKERS = 2
 
 # Data
-if MODE == "2d":
-    train_loader, val_loader = make_loaders(
-        DATA_ROOT, split="train", batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
-else:
-    # use train/val/test
-    train_loader, val_loader, test_loader = make_loaders_3d(
-        DATA_ROOT, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
+# use train/val/test
+train_loader, val_loader, test_loader = make_loaders_3d(
+    DATA_ROOT, batch_size=BATCH_SIZE, num_workers=NUM_WORKERS)
 
 # Model / Optim / Loss
-if MODE == "2d":
-    model = UNet2D(in_channels=1, out_channels=1, base=64).to(device)
-    criterion = nn.BCEWithLogitsLoss()
-else:
-    model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(device)
-    w = CLASS_WEIGHTS.to(device).float()
-    criterion = nn.CrossEntropyLoss(weight=w)
+model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(device)
+w = CLASS_WEIGHTS.to(device).float()
+criterion = nn.CrossEntropyLoss(weight=w)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
@@ -91,11 +75,8 @@ def train_one_epoch():
         optimizer.zero_grad(set_to_none=True)
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
-            if MODE == "3d":
-                ce = criterion(logits, y.squeeze(1).long())
-                loss = ce + 0.5 * soft_dice_loss(logits, y)
-            else:
-                loss = criterion(logits, y)
+            ce = criterion(logits, y.squeeze(1).long())
+            loss = ce + 0.5 * soft_dice_loss(logits, y)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
@@ -126,11 +107,8 @@ def evaluate():
         y = batch["mask"].to(device, non_blocking=True)
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
-            if MODE == "3d":
-                ce = criterion(logits, y.squeeze(1).long())
-                loss = ce + 0.5 * soft_dice_loss(logits, y)
-            else:
-                loss = criterion(logits, y)
+            ce = criterion(logits, y.squeeze(1).long())
+            loss = ce + 0.5 * soft_dice_loss(logits, y)
         loss_sum += loss.item() * x.size(0)
         n += x.size(0)
 

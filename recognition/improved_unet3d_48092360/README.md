@@ -1,5 +1,3 @@
-# UNet 2D/3D Segmentation (COMP3710)
+# UNet3D Segmentation of HipMRI Medical Imaging
 
-Plan: start with HipMRI 2D (Normal), extend to HipMRI 3D (Hard).
-This repo contains:
-modules.py (models), dataset.py (loaders), train.py (train/val/test), predict.py (inference), README.md (docs).
+Author: Roman Bek (48092360)
