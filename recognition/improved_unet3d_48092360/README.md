@@ -1,4 +1,4 @@
-# COMP3710 — Project 7: Improved UNet3D for Prostate MRI Segmentation
+# COMP3710 - Project 7: Improved UNet3D for Prostate MRI Segmentation
 > **Result highlight:** All six labels achieve Dice >= 0.70 on the test set. \
 > **Current run:** min per class Dice = 0.8255 (test).
 
