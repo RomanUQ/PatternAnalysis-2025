@@ -1,4 +1,13 @@
-# recognition/improved_unet3d_48092360/train.py 
+# ===============================================================================================
+# File: recognition/improved_unet3d_48092360/train.py
+# Author: Roman Bek (48092360)
+# Brief: Training script for Improved UNet3D on 3D prostate MRI.
+#   Builds loaders, trains with weighted CE + soft Dice, tracks loss/Dice,
+#   saves best.pt and loss/dice plots to ./outputs.
+# Refs: Isensee (https://arxiv.org/abs/1802.10508v1), nnU-Net (https://arxiv.org/abs/1809.10486)
+# Last date modified: 29/10/2025
+# ===============================================================================================
+
 import time, torch, os
 from torch import nn
 from recognition.improved_unet3d_48092360.dataset import make_loaders_3d
@@ -11,9 +20,6 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 cudnn.benchmark = True
 if device.type == 'cpu':
     print("Warning CUDA not Found. Using CPU")
-
-# MODE toggle
-MODE = "3d"  # strictly "2d" or "3d"
 
 NUM_CLASSES = 6
 
@@ -42,46 +48,51 @@ criterion = nn.CrossEntropyLoss(weight=w)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
 
+# Mixed precision (AMP) scaler (enabled when CUDA is available)
 use_amp = torch.cuda.is_available()
 scaler = torch.amp.GradScaler('cuda', enabled=use_amp)
 
-def dice_coef(logits, target, eps: float = 1e-6):
-    pred = (torch.sigmoid(logits) > 0.5).float()
-    # auto select dims: 2D is (1,2,3), 3D is (1,2,3,4)
-    if pred.dim() == 4:
-        dims = (1,2,3)
-    else:
-        dims = (1,2,3,4)
-    inter = (pred * target).sum(dim=dims)
-    denom = pred.sum(dim=dims) + target.sum(dim=dims) + eps
-    return (2.0 * inter / denom).mean().item()
-
 def soft_dice_loss(logits, target, eps=1e-6):
+    """
+    Multiclass soft Dice loss averaged over classes
+    Inputs:
+        logits (torch.Tensor): raw class logits [B,C,D,H,W]
+        target (torch.Tensor): integer labels [B,1,D,H,W]
+        eps (float): numerical stability term
+    Returns:
+        torch.Tensor: scalar Dice loss (mean over classes)
+    """
     C = logits.size(1)
     t = torch.nn.functional.one_hot(target.squeeze(1), C).permute(0,4,1,2,3).float()
     p = torch.softmax(logits, dim=1)
     inter = (p * t).sum(dim=(0,2,3,4))
     den = (p + t).sum(dim=(0,2,3,4)) + eps
     dice_per_c = 2*inter/den
-    return 1.0 - dice_per_c.mean()
+    return 1 - dice_per_c.mean()
 
 def train_one_epoch():
     """Run one training epoch over train_loader (forward, loss, backward, step)"""
     model.train()
-    running, n = 0.0, 0
+    # running loss accumulators
+    running, n = 0, 0
     for i, batch in enumerate(train_loader):
+        # fetch and move batch to device
         x = batch["image"].to(device, non_blocking=True)
         y = batch["mask"].to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
+        # forward pass under AMP (if enabled)
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
             ce = criterion(logits, y.squeeze(1).long())
             loss = ce + 0.5 * soft_dice_loss(logits, y)
+        # backward + optimizer step (scaled if AMP)
         scaler.scale(loss).backward()
         scaler.step(optimizer)
         scaler.update()
+        # accumulate epoch loss
         running += loss.item() * x.size(0)
         n += x.size(0)
+        # progress log
         if (i + 1) % 500 == 0:
             print(f"  step {i+1}/{len(train_loader)}  loss={loss.item():.4f}", flush=True)
     return running / max(n,1)
@@ -89,77 +100,80 @@ def train_one_epoch():
 @torch.no_grad()
 def evaluate():
     """
-    Evaluate on val_loader and return mean loss
+    Evaluate on the validation set (3D) and compute loss and Dice metrics.
+
     Returns:
-        float: Average validation loss over all samples
+        (float, float, list[float]): (val_loss, min_dice, dice_per_class)
+            - val_loss: average validation loss over all samples
+            - min_dice: minimum Dice across classes that appear in actual label (GT)
+            - dice_per_class: per-class Dice list of length NUM_CLASSES
     """
     model.eval()
-    loss_sum, dice_sum, n = 0.0, 0.0, 0
+    # reset meters
+    loss_sum, n = 0, 0
 
     # accumulators for multiclass Dice (3D)
-    if MODE == "3d":
-        inter_sums = torch.zeros(NUM_CLASSES, device=device)
-        den_sums = torch.zeros(NUM_CLASSES, device=device)
-        gt_sums = torch.zeros(NUM_CLASSES, device=device)
+    inter_sums = torch.zeros(NUM_CLASSES, device=device)
+    den_sums = torch.zeros(NUM_CLASSES, device=device)
+    gt_sums = torch.zeros(NUM_CLASSES, device=device)
 
     for batch in val_loader:
+        # fetch and move batch to device
         x = batch["image"].to(device, non_blocking=True)
         y = batch["mask"].to(device, non_blocking=True)
+        # forward under AMP (no grad)
         with torch.amp.autocast('cuda', enabled=use_amp):
             logits = model(x)
             ce = criterion(logits, y.squeeze(1).long())
             loss = ce + 0.5 * soft_dice_loss(logits, y)
+        # accumulate loss
         loss_sum += loss.item() * x.size(0)
         n += x.size(0)
 
-        if MODE == "3d":
-            # compute classwise dice components
-            t = y.squeeze(1).long()
-            p = logits.softmax(1).argmax(1)
-            for c in range(NUM_CLASSES):
-                pz = (p == c).float()
-                tz = (t == c).float()
-                inter_sums[c] += (pz * tz).sum()
-                den_sums[c] += pz.sum() + tz.sum()
-                gt_sums[c] += tz.sum()
-        else:
-            dice_sum += dice_coef(logits, y) * x.size(0)
+        # compute classwise dice components
+        t = y.squeeze(1).long()
+        p = logits.softmax(1).argmax(1)
+        for c in range(NUM_CLASSES):
+            pz = (p == c).float()
+            tz = (t == c).float()
+            inter_sums[c] += (pz * tz).sum()
+            den_sums[c] += pz.sum() + tz.sum()
+            gt_sums[c] += tz.sum()
 
-    if MODE == "3d":
-        dice_per_class = (2.0 * inter_sums / (den_sums + 1e-6)).tolist()
-        # ignore classes never present in GT to avoid degenerate denominators
-        gt_list = gt_sums.tolist()
-        valid = []
-        for i, cnt in enumerate(gt_list):
-            if cnt > 0:
-                valid.append(i)
-        if valid:
-            min_val = None
-            for i in valid:
-                val_i = dice_per_class[i]
-                if (min_val is None) or (val_i < min_val):
-                    min_val = val_i
-            min_dice = min_val
-        else:
-            min_dice = 0.0
-        # compact printout
-        parts = []
+    dice_per_class = (2 * inter_sums / (den_sums + 1e-6)).tolist()
+    # ignore classes never present in GT to avoid degenerate denominators
+    gt_list = gt_sums.tolist()
+    valid = []
+    for i, cnt in enumerate(gt_list):
+        if cnt > 0:
+            valid.append(i)
+    if valid:
+        min_val = None
         for i in valid:
-            parts.append(f"c{i}:{dice_per_class[i]:.3f}")
-        short = " ".join(parts)
-        print(f"    [val dice per class] {short}")
-        return loss_sum / max(n,1), float(min_dice), [float(v) for v in dice_per_class]
+            val_i = dice_per_class[i]
+            if (min_val is None) or (val_i < min_val):
+                min_val = val_i
+        min_dice = min_val
     else:
-        return loss_sum / n, dice_sum / n, None
+        min_dice = 0
+    # compact printout
+    parts = []
+    for i in valid:
+        parts.append(f"c{i}:{dice_per_class[i]:.3f}")
+    short = " ".join(parts)
+    print(f"    [val dice per class] {short}")
+    return loss_sum / max(n,1), float(min_dice), [float(v) for v in dice_per_class]
 
 if __name__ == "__main__":
 
     # Run + track metrics
     os.makedirs("recognition/improved_unet3d_48092360/outputs", exist_ok=True)
+    # metric buffers (losses and min-Dice per epoch)
     train_losses, val_losses, val_dice = [], [], [] # val_dice stores MIN dice
     val_dice_all = []
     best = float('inf'); t0 = time.time()
 
+    # epoch loop: train then evaluate
     for ep in range(1, EPOCHS + 1):
         tr_loss = train_one_epoch()
         va_loss, va_d, va_d_pc = evaluate()
@@ -188,58 +202,59 @@ if __name__ == "__main__":
         plt.xlabel("Epoch"); plt.ylabel("Dice (0–1)"); plt.legend()
         plt.title("Validation Dice per Class per Epoch")
         plt.tight_layout(); plt.savefig("recognition/improved_unet3d_48092360/outputs/dice_curve.png", dpi=150); plt.close()
-    else:
-        # Fallback (shouldn't happen in MODE=='3d')
-        plt.figure(); plt.plot(val_dice, label="min Dice across classes"); plt.xlabel("Epoch"); plt.ylabel("Dice (0–1)"); plt.legend(); plt.title("Validation Min Dice per Epoch"); 
-        plt.tight_layout(); plt.savefig("recognition/improved_unet3d_48092360/outputs/dice_curve.png", dpi=150); plt.close()
 
     print(f"Saved plots to {os.path.abspath('recognition/improved_unet3d_48092360/outputs')}")
     print(f"Total time: {time.time()-t0:.1f}s")
 
     # Final test evaluation
-    if MODE == "3d":
-        model.eval()
-        loss_sum, n = 0.0, 0
-        inter_sums = torch.zeros(NUM_CLASSES, device=device)
-        den_sums = torch.zeros(NUM_CLASSES, device=device)
-        gt_sums = torch.zeros(NUM_CLASSES, device=device)
-        with torch.no_grad():
-            for batch in test_loader:
-                x = batch["image"].to(device, non_blocking=True)
-                y = batch["mask"].to(device, non_blocking=True)
-                with torch.amp.autocast('cuda', enabled=use_amp):
-                    logits = model(x)
-                    loss = criterion(logits, y.squeeze(1).long())
-                loss_sum += loss.item() * x.size(0)
-                n += x.size(0)
-                t = y.squeeze(1).long()
-                p = logits.softmax(1).argmax(1)
-                for c in range(NUM_CLASSES):
-                    pz = (p == c).float()
-                    tz = (t == c).float()
-                    inter_sums[c] += (pz * tz).sum()
-                    den_sums[c] += pz.sum() + tz.sum()
-                    gt_sums[c] += tz.sum()
+    model.eval()
+    # aggregate test metrics over test_loader
+    loss_sum, n = 0, 0
+    inter_sums = torch.zeros(NUM_CLASSES, device=device)
+    den_sums = torch.zeros(NUM_CLASSES, device=device)
+    gt_sums = torch.zeros(NUM_CLASSES, device=device)
+    with torch.no_grad():
+        for batch in test_loader:
+            # fetch and move batch to device
+            x = batch["image"].to(device, non_blocking=True)
+            y = batch["mask"].to(device, non_blocking=True)
+            # forward under AMP (no grad)
+            with torch.amp.autocast('cuda', enabled=use_amp):
+                logits = model(x)
+                loss = criterion(logits, y.squeeze(1).long())
+            # accumulate loss and dice components
+            loss_sum += loss.item() * x.size(0)
+            n += x.size(0)
+            t = y.squeeze(1).long()
+            p = logits.softmax(1).argmax(1)
+            for c in range(NUM_CLASSES):
+                pz = (p == c).float()
+                tz = (t == c).float()
+                inter_sums[c] += (pz * tz).sum()
+                den_sums[c] += pz.sum() + tz.sum()
+                gt_sums[c] += tz.sum()
 
-        test_loss = loss_sum / max(n,1)
-        dice_per_class = (2.0 * inter_sums / (den_sums + 1e-6)).tolist()
-        gt_list_test = gt_sums.tolist()
-        valid = []
-        for i, cnt in enumerate(gt_list_test):
-            if cnt > 0:
-                valid.append(i)
-        if valid:
-            min_val = None
-            for i in valid:
-                val_i = dice_per_class[i]
-                if (min_val is None) or (val_i < min_val):
-                    min_val = val_i
-            min_dice = min_val
-        else:
-            min_dice = 0.0
-        parts = []
+    # compute final test metrics
+    test_loss = loss_sum / max(n,1)
+    dice_per_class = (2 * inter_sums / (den_sums + 1e-6)).tolist()
+    gt_list_test = gt_sums.tolist()
+    valid = []
+    for i, cnt in enumerate(gt_list_test):
+        if cnt > 0:
+            valid.append(i)
+    if valid:
+        min_val = None
         for i in valid:
-            parts.append(f"c{i}:{dice_per_class[i]:.3f}")
-        short = " ".join(parts)
-        print(f"TEST: loss {test_loss:.4f} | min dice {min_dice:.4f}")
-        print(f"TEST: dice per class: {short}")
+            val_i = dice_per_class[i]
+            if (min_val is None) or (val_i < min_val):
+                min_val = val_i
+        min_dice = min_val
+    else:
+        min_dice = 0
+    # compact test printout
+    parts = []
+    for i in valid:
+        parts.append(f"c{i}:{dice_per_class[i]:.3f}")
+    short = " ".join(parts)
+    print(f"TEST: loss {test_loss:.4f} | min dice {min_dice:.4f}")
+    print(f"TEST: dice per class: {short}")

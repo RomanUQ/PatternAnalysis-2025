@@ -1,9 +1,18 @@
-# recognition/improved_unet3d_48092360/modules.py
+# ================================================================================================
+# File: recognition/improved_unet3d_48092360/modules.py
+# Author: Roman Bek (48092360)
+# Brief: Isensee style Improved UNet3D for prostate MRI segmentation (6 classes)
+#   with pre-activation residual context blocks, learnable downsampling,
+#   nearest-neighbor upsampling + 3x3x3 conv, localization blocks and
+#   summed deep-supervision heads.
+# Refs: Isensee (https://arxiv.org/abs/1802.10508v1), nnU-Net (https://arxiv.org/abs/1809.10486)
+# Last date modified: 29/10/2025
+# =================================================================================================
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-# ---------------------------- Improved UNet3D ----------------------------
 
 class UNet3D(nn.Module):
     """
@@ -15,10 +24,8 @@ class UNet3D(nn.Module):
     - Deep supervision: sum of mult -scale segmentation heads
     - out_chanels = 6 for HipMRI: background + 5 organs
 
-    REF: nnU-Net (InstanceNorm for small batches)
-    https://arxiv.org/abs/1809.10486
-    REF: CAN3D (compact fast 3D designs)
-    https://arxiv.org/abs/2109.05443
+    REF: (Isensee 2018)
+    https://arxiv.org/abs/1802.10508v1
     """
     def __init__(self, in_channels: int = 1, out_channels: int = 6, base: int = 16, deep_supervision: bool = True):
         super().__init__()
@@ -44,6 +51,7 @@ class UNet3D(nn.Module):
         self.seg3 = nn.Conv3d(base*2, out_channels, kernel_size=1)
 
     def forward(self, x):
+        # Encoder path: context features at progressively lower resolutions
         x1 = self.inc(x)
         x2 = self.down1(x1)
         x3 = self.down2(x2)
@@ -51,12 +59,13 @@ class UNet3D(nn.Module):
         x5 = self.down4(x4)
         x6 = self.bot(x5)
 
-        # decoder
+        # Decoder path: upsample, align+concat skip, then localize/refine
         y1 = self.up1(x6, x4) # base*8
         y2 = self.up2(y1, x3) # base*4
         y3 = self.up3(y2, x2) # base*2
         y4 = self.up4(y3, x1) # base
 
+        # Final classifier, if enabled add deep supervision heads (upsampled) to logits
         # REF: https://docs.pytorch.org/docs/stable/generated/torch.nn.functional.interpolate.html
         logits = self.outc(y4)
         if self.deep_supervision:
@@ -74,6 +83,8 @@ class ContextBlock3d(nn.Module):
     IN, LeakyReLU, 3x3x3, Dropout3d, IN, LeakyReLU, 3x3x3, with residual
     If channels change uses 1x1x1 for the skip path
 
+    REF: nnU-Net (LeakyReLU)
+    https://arxiv.org/abs/1809.10486
     REF: (Isensee, 2018)
     https://arxiv.org/abs/1802.10508
     """
@@ -89,6 +100,7 @@ class ContextBlock3d(nn.Module):
         self.skip = nn.Identity() if in_ch == out_ch else nn.Conv3d(in_ch, out_ch, kernel_size=1, bias=True)
 
     def forward(self, x):
+        # Pre activation -> conv -> dropout -> pre-activation -> conv -> residual add
         res = x
         y = self.act1(self.in1(x))
         y = self.conv1(y)
@@ -102,7 +114,9 @@ class LocalizationBlock3d(nn.Module):
     """
     Localization block: 3x3x3 conv (+IN+LeakyReLU), 1x1x1 conv
     Used after concatenating skip and upsampled features to reduce/aggregate channels
-
+    
+    REF: nnU-Net (LeakyReLU)
+    https://arxiv.org/abs/1809.10486
     REF: (Isensee, 2018)
     https://arxiv.org/abs/1802.10508v1
     """
@@ -114,11 +128,13 @@ class LocalizationBlock3d(nn.Module):
         self.conv2 = nn.Conv3d(out_ch, out_ch, kernel_size=1, bias=True)
 
     def forward(self, x):
+        # Reduce+refine fused (skip+upsampled) features
         x = self.conv1(x)
         x = self.act1(self.in1(x))
         x = self.conv2(x)
         return x
     
+
 class Down3d(nn.Module):
     """
     Improved downsampling (Isensee et al.): 3x3x3 stride-2 conv -> ContextBlock3d.
@@ -133,6 +149,7 @@ class Down3d(nn.Module):
         self.block = ContextBlock3d(out_ch, out_ch, pdrop=0.3)
 
     def forward(self, x):
+        # Strided conv for downsampling then context processing
         return self.block(self.down(x))
 
 
@@ -143,8 +160,6 @@ class Up3d(nn.Module):
 
     REF: (Isensee, 2018) nearest upsample+conv vs transpose conv
     https://arxiv.org/abs/1802.10508v1
-    REF: (compact/fast 3D design context, CAN3D): 
-    https://arxiv.org/abs/2109.05443
     """
     def __init__(self, in_ch: int, out_ch: int, skip_ch: int):
         super().__init__()
@@ -155,18 +170,20 @@ class Up3d(nn.Module):
         self.loc = LocalizationBlock3d(in_ch // 2 + skip_ch, out_ch)
 
     def _align(self, skip, x):
-        # pad then center crop so D/H/W match
+        # Pad/crop the skip so spatial dims match the upsampled tensor (D, H, W)
         pd = max(0, x.size(2) - skip.size(2))
         ph = max(0, x.size(3) - skip.size(3))
         pw = max(0, x.size(4) - skip.size(4))
         if pd or ph or pw:
-            skip = F.pad(skip, (pw//2, pw - pw//2,  ph//2, ph - ph//2, pd//2, pd - pd//2)) # W, H, D
+            # W, H, D
+            skip = F.pad(skip, (pw//2, pw - pw//2,  ph//2, ph - ph//2, pd//2, pd - pd//2))
         dd = (skip.size(2) - x.size(2)) // 2
         dh = (skip.size(3) - x.size(3)) // 2
         dw = (skip.size(4) - x.size(4)) // 2
         return skip[:, :, dd:dd + x.size(2), dh:dh + x.size(3), dw:dw + x.size(4)]
 
     def forward(self, x, skip):
+        # Upsample -> channel reduce -> align+concat skip -> localization refine
         x = self.up(x)
         x = self.act(self.in1(self.reduce(x)))
         skip = self._align(skip, x)
@@ -183,4 +200,5 @@ class OutConv3d(nn.Module):
         self.conv = nn.Conv3d(in_ch, out_ch, kernel_size=1)
 
     def forward(self, x):
+        # Map decoder features to raw class logits
         return self.conv(x)
