@@ -1,24 +1,29 @@
 # COMP3710 — Project 7: Improved UNet3D for Prostate MRI Segmentation
-> Result highlight: All six labels achieve Dice >= 0.70 on the test set.
+> Result highlight: All six labels achieve Dice >= 0.70 on the test set. \
 > Current run: min per class Dice = 0.8255 (test).
-___
+---
+
+ Author:  Roman Bek (48092360)
+
+---
 
 ![Model Diagram](recognition/improved_unet3d_48092360/outputs/predict_example_3d.PNG)
 
----
-
-**Author:** Roman Bek (48092360)
 ___
-## Scope
+
+## Scope 
 This repository implements only the 3D solution for Project 7 (Improved UNet3D). Previously explored a 2D UNet as a warm up, but per course guidance only 3D materials are included here and the 2D work is mentioned for context only and not part of the submission however, it can be seen in the commit history.
----
+
+___
+
 ## Problem and Goal
 **Task:** Segment downsampled 3D prostate MRI volumes into semantic classes (background + 5 organs), meeting the project requirement that all labels achieve Dice >= 0.70 on the test set.
 
 **Dataset format:** NIfTI volumes (.nii.gz) with matching image/label stems.
----
-## Method
 
+___
+
+## Method
 The model implemented is the Improved UNet3D inspired by nnU-Net/Isensee:
 
 * Context blocks (pre activation residual): IN; LeakyReLU; 3x3x3; Dropout3d; IN; LeakyReLU; 3x3x with residual/1x1x1 skip.
@@ -36,8 +41,11 @@ The model implemented is the Improved UNet3D inspired by nnU-Net/Isensee:
 * Loss: CrossEntropy(weight=class_weights) + 0.5 * soft_dice_loss(logits, y)
     - CE provides calibrated class probabilities, soft dice directly optimises region overlap. Class weights down weight background and up weight small organs to combat imbalance. This hybrid objective follows successful practice in medical segmentation (Isensee, 2018).
 
-**Algorithm:** The encoder captures 3D context via residual ContextBlock3d modules with learnable downsampling to keep discriminative signal at depth. The decoder upsamples without transpose conv artifacts, fuses aligned skips and uses Localisation blocks to refine features. Deep supervision improves gradient flow and multi scale consistency. Class weighted CE + soft Dice balances calibrated probabilities with boundary/overlap quality while InstanceNorm3d decouples stats from small batches.
----
+### Algorithm:
+The encoder captures 3D context via residual ContextBlock3d modules with learnable downsampling to keep discriminative signal at depth. The decoder upsamples without transpose conv artifacts, fuses aligned skips and uses Localisation blocks to refine features. Deep supervision improves gradient flow and multi scale consistency. Class weighted CE + soft Dice balances calibrated probabilities with boundary/overlap quality while InstanceNorm3d decouples stats from small batches.
+
+___
+
 ## Model Details
 * Improved UNet3D (Isensee style)
 * Classes: NUM_CLASSES = 6 (mapping: 0=Background, 1=Body, 2=Bone, 3=Bladder, 4=Rectum, 5=Prostate)
@@ -45,7 +53,9 @@ The model implemented is the Improved UNet3D inspired by nnU-Net/Isensee:
 * Normalisation: InstanceNorm3d
 * Activations: LeakyReLU(0.01)
 * Regularisation: light Dropout3d in context blocks
----
+
+___
+
 ## Data and Preprocessing
 ### Transforms
 * Z-score normalization per volume (images only)
@@ -54,10 +64,13 @@ The model implemented is the Improved UNet3D inspired by nnU-Net/Isensee:
     - Pelvic structures are about symmetric so flips expand data diversity cheaply and reduce overfitting
 * Tensor shapes: images to [1, D, H, W], labels to [1, D, H, W] (long, class ids). Where, 1: channels (grayscale); D: depth; H: height; W: width
 * Batching: zero-pad each sample to batch maxima in D/H/W.
----
-### Split and reproducibility
+
+___
+
+## Split and reproducibility
 * Deterministic 80/10/10 train/val/test via a fixed generator seed (67). This maximizes training data while retaining a non tiny validation set for stable model selection.
 * 80% maximizes learning signal and 10% val is large enough for stable model selection and fixed seed makes runs comparable
+
 ## Training Setup
 * Loss: CrossEntropy(weight=class_weights) + 0.5 * soft_dice_loss(logits, y)
 * Class weights: [0.05, 1.0, 1.0, 1.0, 2.0, 2.0] (down weight background, emphasize small organs)
@@ -67,7 +80,9 @@ The model implemented is the Improved UNet3D inspired by nnU-Net/Isensee:
 * Metrics: per-class Dice on val each epoch; min per-class Dice shown as a conservative summary; test reported at end
 
 **Justification:** Batch size = 1 to fit full 3D volumes in VRAM while remaining stable with InstanceNorm3d; 30 epochs because val loss/Dice could plateau around 25–30 and already meet the >= 0.7 per class target; LR = 5e-4 (AdamW) as a stable mid range choice (between 1e-4 and 1e-3) that converges reliably with deep supervision under AMP.
----
+
+___
+
 ## Environment and Dependencies
 ### Versions
 * Python 3.10.6
@@ -82,7 +97,9 @@ The model implemented is the Improved UNet3D inspired by nnU-Net/Isensee:
 * Epochs: 30, batch size: 1
 * Total time: ~ 10,953.7 s (~ 3 h 02 m)
 * Device is selected automatically: CUDA if available, otherwise CPU
----
+
+___
+
 ## Usage
 ### 1) Place data
 **Put 3D data under:**
@@ -106,7 +123,9 @@ The model implemented is the Improved UNet3D inspired by nnU-Net/Isensee:
 **Outputs:**
 - Console: per class Dice for a held out example
 - recognition/improved_unet3d_48092360/outputs/predict_example_3d.png    (central axial slice (image, GT, pred))
----
+
+___
+
 ## Results
 ### Validation (during training)
 Loss and "min perclass Dice" per epoch are printed; the two plots are saved automatically to recognition/improved_unet3d_48092360/outputs
@@ -125,4 +144,4 @@ where c0: Background, c1: Body, c2: Bone, c3: Bladder, c4: Rectum, c5: Prostate
 
 ---
 
-![Validation Dice per Class per Epoch](recognition/improved_unet3d_48092360/outputs/dice_curve.png)
+![Validation Dice per Class per Epoch](./outputs/dice_curve.png)
