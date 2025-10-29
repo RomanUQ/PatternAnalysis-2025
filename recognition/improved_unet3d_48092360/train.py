@@ -25,7 +25,7 @@ CLASS_WEIGHTS = torch.tensor([0.05, 1.0, 1.0, 1.0, 2.0, 2.0])
 DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
 
 DATA_ROOT = DATA_ROOT_3D
-EPOCHS = 30
+EPOCHS = 2
 BATCH_SIZE = 1
 LR = 5e-4
 NUM_WORKERS = 2
@@ -148,34 +148,52 @@ def evaluate():
             parts.append(f"c{i}:{dice_per_class[i]:.3f}")
         short = " ".join(parts)
         print(f"    [val dice per class] {short}")
-        return loss_sum / max(n,1), float(min_dice)
+        return loss_sum / max(n,1), float(min_dice), [float(v) for v in dice_per_class]
     else:
-        return loss_sum / n, dice_sum / n
+        return loss_sum / n, dice_sum / n, None
 
 if __name__ == "__main__":
 
     # Run + track metrics
-    os.makedirs("checkpoints", exist_ok=True)
-    os.makedirs("plots", exist_ok=True)
-    train_losses, val_losses, val_dice = [], [], []
+    os.makedirs("recognition/improved_unet3d_48092360/outputs", exist_ok=True)
+    train_losses, val_losses, val_dice = [], [], [] # val_dice stores MIN dice
+    val_dice_all = []
     best = float('inf'); t0 = time.time()
 
     for ep in range(1, EPOCHS + 1):
         tr_loss = train_one_epoch()
-        va_loss, va_d = evaluate()
+        va_loss, va_d, va_d_pc = evaluate()
         train_losses.append(tr_loss); val_losses.append(va_loss); val_dice.append(va_d)
+        if va_d_pc is not None:
+            val_dice_all.append(va_d_pc)
 
         # save best checkpoint (by val loss)
         if va_loss <= best:
             best = va_loss
-            torch.save(model.state_dict(), os.path.join("checkpoints", "best.pt"))
+            torch.save(model.state_dict(), os.path.join("recognition/improved_unet3d_48092360/outputs", "best.pt"))
 
         print(f"Epoch {ep:02d}/{EPOCHS} | train loss {tr_loss:.4f} | val loss {va_loss:.4f} | dice {va_d:.4f} | best {best:.4f}")
 
     # plots
-    plt.figure(); plt.plot(train_losses, label="train"); plt.plot(val_losses, label="val"); plt.legend(); plt.title("Loss"); plt.savefig("plots/loss_curve.png", dpi=150); plt.close()
-    plt.figure(); plt.plot(val_dice, label="val dice"); plt.legend(); plt.title("Dice"); plt.savefig("plots/dice_curve.png", dpi=150); plt.close()
-    print(f"Saved plots to {os.path.abspath('plots')}")
+    plt.figure(); plt.plot(train_losses, label="train"); plt.plot(val_losses, label="val"); plt.xlabel("Epoch"); plt.ylabel("Loss"); 
+    plt.legend(); plt.title("Train vs Val Loss"); plt.tight_layout(); plt.savefig("recognition/improved_unet3d_48092360/outputs/loss_curve.png", dpi=150); plt.close()
+
+    # Per class Dice curves across epochs
+    if len(val_dice_all) > 0:
+        plt.figure()
+        epochs = range(1, len(val_dice_all) + 1)
+        for c in range(NUM_CLASSES):
+            series = [row[c] for row in val_dice_all]
+            plt.plot(epochs, series, label=f"c{c}")
+        plt.xlabel("Epoch"); plt.ylabel("Dice (0–1)"); plt.legend()
+        plt.title("Validation Dice per Class per Epoch")
+        plt.tight_layout(); plt.savefig("recognition/improved_unet3d_48092360/outputs/dice_curve.png", dpi=150); plt.close()
+    else:
+        # Fallback (shouldn't happen in MODE=='3d')
+        plt.figure(); plt.plot(val_dice, label="min Dice across classes"); plt.xlabel("Epoch"); plt.ylabel("Dice (0–1)"); plt.legend(); plt.title("Validation Min Dice per Epoch"); 
+        plt.tight_layout(); plt.savefig("recognition/improved_unet3d_48092360/outputs/dice_curve.png", dpi=150); plt.close()
+
+    print(f"Saved plots to {os.path.abspath('recognition/improved_unet3d_48092360/outputs')}")
     print(f"Total time: {time.time()-t0:.1f}s")
 
     # Final test evaluation
@@ -223,5 +241,5 @@ if __name__ == "__main__":
         for i in valid:
             parts.append(f"c{i}:{dice_per_class[i]:.3f}")
         short = " ".join(parts)
-        print(f"[TEST] loss {test_loss:.4f} | min dice {min_dice:.4f}")
-        print(f"[TEST] dice per class: {short}")
+        print(f"TEST: loss {test_loss:.4f} | min dice {min_dice:.4f}")
+        print(f"TEST: dice per class: {short}")

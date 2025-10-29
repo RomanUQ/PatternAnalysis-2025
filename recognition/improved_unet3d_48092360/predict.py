@@ -11,13 +11,14 @@ NUM_CLASSES = 6
 # Data roots
 DATA_ROOT_3D = r"C:\Users\roman\Desktop\COMP3710_REPORT\PatternAnalysis-2025\recognition\improved_unet3d_48092360\data\3d_dataset"
 
-CKPT = "checkpoints/best.pt" # loads if file exists
+OUTDIR = "recognition/improved_unet3d_48092360/outputs"
+CKPT = os.path.join(OUTDIR, "best.pt") # loads if file exists
 THRESH = 0.5
 
 
 @torch.no_grad()
 def main():
-    os.makedirs("plots", exist_ok=True)
+    os.makedirs(OUTDIR, exist_ok=True)
 
     # 3D path (multiclass)
     model = UNet3D(in_channels=1, out_channels=NUM_CLASSES, base=16, deep_supervision=True).to(DEVICE)
@@ -77,8 +78,9 @@ def main():
     plt.figure(figsize=(9,3))
     for i, (title, arr) in enumerate([("image[z=mid]", img_s), ("mask[z=mid]", msk_s), ("pred[z=mid]", pred_s)]):
         plt.subplot(1,3,i+1); plt.imshow(arr, cmap="gray"); plt.title(title); plt.axis("off")
-    plt.tight_layout(); plt.savefig("plots/predict_example_3d.png", dpi=150); plt.close()
-    print("Saved:", os.path.abspath("plots/predict_example_3d.png"))
+    out_path = os.path.abspath(os.path.join(OUTDIR, "predict_example_3d.png"))
+    plt.tight_layout(); plt.savefig(out_path, dpi=150); plt.close()
+    print("Saved:", out_path)
 
 
 if __name__ == "__main__":
