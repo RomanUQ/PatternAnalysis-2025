@@ -19,10 +19,20 @@ ___
 
 ___
 
+## Repository Contents
+recognition/improved_unet3d_48092360/
+   - outputs/ ------ Where plots, segmentation image and model snapshot (snapshot file not included in repo) are saved
+   - dataset.py ---- 3D HipMRI dataset + transforms + deterministic 80/10/10 split
+   - modules.py ---- improved UNet3D (Context/Down/Up/Localization/Out and deep supervision)
+   - predict.py ---- load checkpoint, perclass Dice, central slice visualisation
+   - train.py ------ rain/val/test loops, CE + soft Dice, AMP, plots and best checkpoint
+
+___
+
 ## Method
 The implementation follows the [Isensee 3D U-Net](https://arxiv.org/abs/1802.10508v1) design and [nnU-Net](https://arxiv.org/abs/1809.10486) conventions: the encoder stacks pre activation residual context blocks (InstanceNorm3d; LeakyReLU 0.01; 3x3x3 conv; Dropout3d; InstanceNorm3d; LeakyReLU 0.01 and then 3x3x3 conv). With a 1x1x1 skip when channels change linked by 3x3x3 stride-2 convolutions for learnable downsampling. The decoder uses nearest neighbor x2 upsampling followed by a 3x3x3 conv to avoid checkerboard artifacts, concatenates the aligned skip and applies a light localisation block (3x3x3 then 1x1x1) (*Figure 1*). Deep supervision is added by summing two auxiliary 1x1x1 heads into the final logits, and use InstanceNorm3d and LeakyReLU(0.01) as in [nnU-Net](https://arxiv.org/abs/1809.10486). The loss is weighted cross entropy plus soft Dice so background is down weighted and classes 4 and 5 (rectum/prostate) are up weighted to handle class imbalance. The current implementation does however have differences to the referenced setup. A narrower width (base=16 rather than 32/64) to fit VRAM and speed full volume training, a simple training recipe (z-score per volume, axis flips only, manual class weights) instead of [nnU-Net](https://arxiv.org/abs/1809.10486)'s full auto pipeline for clarity and AdamW with summed deep supervision heads for stable convergence and stronger small-organ Dice. Finally, the minimum per-class Dice are reported to match the project goal that all labels achieve >= 0.70.
 
-![Model Diagram](./outputs/network_architecture.PNG)
+![Model Diagram](./outputs/network_architecture.PNG) \
 *Figure 1. Network architecture ([Isensee](https://arxiv.org/abs/1802.10508v1))*
 
 ___
@@ -96,7 +106,7 @@ ___
 - python recognition/improved_unet3d_48092360/train.py
 
 **Artifacts are saved in:**
-- recognition/improved_unet3d_48092360/outputs/best.pt ------- (best by validation loss)
+- recognition/improved_unet3d_48092360/outputs/best.pt ------- (best by validation loss model snapshot)
 - recognition/improved_unet3d_48092360/outputs/loss_curve.png
 - recognition/improved_unet3d_48092360/outputs/dice_curve.png
 
@@ -119,17 +129,10 @@ Loss and "min perclass Dice" per epoch are printed; the two plots are saved auto
 TEST: loss **0.0622** | min dice **0.8255** \
 TEST: dice per class: c0:**0.989** c1:**0.972** c2:**0.897** c3:**0.902** c4:**0.826** c5:**0.836**
 
-| Class | Name       | Dice  | \
-|-------|------------|-------| \
-| c0    | Background | 0.989 | \
-| c1    | Body       | 0.972 | \
-| c2    | Bone       | 0.897 | \
-| c3    | Bladder    | 0.902 | \
-| c4    | Rectum     | 0.826 | \
-| c5    | Prostate   | 0.836 | \
+![dice table](./outputs/dice_table.PNG) \
 *Table 1. Per class Dice on the test set*
 
-![image example](./outputs/predict_example_3d.png)
+![image example](./outputs/predict_example_3d.png) \
 *Figure 2. Central axial slice from volume 0: input MRI (left), ground truth labels (middle) and UNet3D prediction (right)*
 
 **Results Analysis:** \
@@ -139,19 +142,19 @@ ___
 
 ## Plot of Loss and Plot of Dice
 
-![Train vs Val Loss](./outputs/loss_curve.png)
+![Train vs Val Loss](./outputs/loss_curve.png) \
 *Figure 3. Train vs validation loss across epochs*
 
 **Loss Analysis:** \
-Training and validation loss both drop fast at the start, then keep trending down with a few small oscillations. The gap between train and val stays narrow which indicates low overfitting and good generalisation. Some bumps are expected with class balanced sampling and augmentation since they follow brief drops in Dice but recover as the optimiser settles. By the final epochs, validation loss stabilises at a low level, consistent with the strong test Dice.
+Training and validation loss both drop fast at the start, then keep trending down with a few small oscillations. The gap between train and val stays narrow which indicates low overfitting and good generalisation. Some bumps are expected with class balanced sampling and augmentation since they follow brief drops in Dice but recover as the optimiser settles. By the final epochs, validation loss stabilises at a low level, consistent with the strong test Dice (*Figure 3*).
 
 ---
 
-![Validation Dice per Class per Epoch](./outputs/dice_curve.png)
+![Validation Dice per Class per Epoch](./outputs/dice_curve.png) \
 *Figure 4. Validation Dice per class per epoch*
 
 **Dice Analysis:** \
-Large classes—c0 (Background) and c1 (Body) reach high dice early because they cover most voxels and are easy to learn. Mid sized structures—c2 (Bone) and c3 (Bladder) improve steadily as deeper features and skip connections refine boundaries. Small/rare organs c4 (Rectum) and c5 (Prostate) start low due to poor class imbalance, because of thin shapes but improve across epochs as class weighted CE and deep supervision reinforce them. By the end, all classes converge to strong Dice.
+Large classes—c0 (Background) and c1 (Body) reach high dice early because they cover most voxels and are easy to learn. Mid sized structures—c2 (Bone) and c3 (Bladder) improve steadily as deeper features and skip connections refine boundaries. Small/rare organs c4 (Rectum) and c5 (Prostate) start low due to poor class imbalance, because of thin shapes but improve across epochs as class weighted CE and deep supervision reinforce them. By the end, all classes converge to strong Dice (*Figure 4*).
 
 ___
 
