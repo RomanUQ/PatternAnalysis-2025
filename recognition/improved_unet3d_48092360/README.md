@@ -15,7 +15,7 @@ ___
 ## Problem and Goal
 **Task:** Segment downsampled 3D prostate MRI volumes into semantic classes (background + 5 organs), meeting the project requirement that all labels achieve Dice >= 0.70 on the test set.
 
-**Dataset format:** NIfTI volumes (.nii.gz) with matching image/label stems ([CSIRO]https://data.csiro.au/collection/csiro:51392v2).
+**Dataset format:** NIfTI volumes (.nii.gz) with matching image/label stems ([CSIRO](https://data.csiro.au/collection/csiro:51392v2)).
 
 ___
 
@@ -155,6 +155,15 @@ Training and validation loss both drop fast at the start, then keep trending dow
 
 **Dice Analysis:** \
 Large classes—c0 (Background) and c1 (Body) reach high dice early because they cover most voxels and are easy to learn. Mid sized structures—c2 (Bone) and c3 (Bladder) improve steadily as deeper features and skip connections refine boundaries. Small/rare organs c4 (Rectum) and c5 (Prostate) start low due to poor class imbalance, because of thin shapes but improve across epochs as class weighted CE and deep supervision reinforce them. By the end, all classes converge to strong Dice (*Figure 4*).
+
+___
+
+## Conclusion
+
+This project delivers a clear and reproducable 3D UNet solution for prostate MRI segmentation (Project 7) and meets the task requirement of Dice >= 0.7 with all labels scoring above Dice of 0.8 on the test set. The model utilises straightforward Isensee style architecture, combined with deep supervision and class balanced losses. It is effective for full volume 3D segmentation while remaining easy to train and run. Overall, the system meets the project goals and successfully delivers accurate, stable segmentation results on the downsampled HipMRI dataset.
+
+**Future Improvements:** \
+Future work could explore wider channel depths and stronger augmentations to further boost small organ accuracy. This would yield gains while keeping the pipeline reproducable.
 
 ___
 
